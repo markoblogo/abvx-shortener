@@ -5,9 +5,10 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extension = resolve(root, "extension");
 const manifest = JSON.parse(await readFile(resolve(extension, "manifest.json"), "utf8"));
+const workerPackage = JSON.parse(await readFile(resolve(root, "worker/package.json"), "utf8"));
 
 if (manifest.manifest_version !== 3) throw new Error("Extension must use Manifest V3");
-if (manifest.version !== "0.3.0") throw new Error("Extension version must match release 0.3.0");
+if (manifest.version !== workerPackage.version) throw new Error("Extension and Worker versions must match");
 if ((manifest.host_permissions || []).includes("https://*/*")) {
   throw new Error("Broad host access must remain optional");
 }

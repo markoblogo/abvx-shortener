@@ -48,7 +48,7 @@ curl --fail https://go.example.com/health
 Expected shape:
 
 ```json
-{"ok":true,"version":"0.3.0","requestId":"…"}
+{"ok":true,"version":"0.3.1","requestId":"…"}
 ```
 
 ## Create a link
@@ -92,7 +92,7 @@ When using `API_KEYS_JSON`, also set `ABVX_API_KEY_ID` or pass `--api-key-id`.
 
 ### Chrome extension
 
-1. Download `abvx-shortener-extension-v0.3.0.zip` from the release and unpack it.
+1. Download `abvx-shortener-extension-v0.3.1.zip` from the release and unpack it.
 2. Open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**.
 3. Choose the unpacked `extension` directory and enter your endpoint and API key.
 
