@@ -2,9 +2,9 @@
 
 const args = process.argv.slice(2);
 
-if (!args.length) {
+if (!args.length || args[0] === "--help" || args[0] === "-h") {
   printHelp();
-  process.exit(1);
+  process.exit(args.length ? 0 : 1);
 }
 
 const command = args[0];

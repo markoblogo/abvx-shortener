@@ -1010,7 +1010,7 @@ export default {
       }
 
       if (normalizedPath === "/health") {
-        return finish(json({ ok: true, version: "0.3.0", requestId }));
+        return finish(json({ ok: true, version: "0.3.1", requestId }));
       }
 
       if (normalizedPath === "/api/shorten") {

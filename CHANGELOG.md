@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.1 — 2026-09-11
+
+- Fixed `abvx-shorten --help` to exit successfully.
+- Added the CLI smoke check to the shared local and CI quality gate.
+- Updated GitHub workflow actions to their Node 24 based releases.
+
 ## v0.3.0 — 2026-09-11
 
 - Restored the browser shortening form and refreshed the public product page without external UI dependencies.

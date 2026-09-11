@@ -40,4 +40,4 @@ npm run check
 npx wrangler dev
 ```
 
-Версия `v0.3.0` использует Wrangler 4, нативный Cloudflare rate limiter, SHA-256 для хешированных API-ключей и fail-closed разбор конфигурации ключей.
+Версия `v0.3.1` использует Wrangler 4, нативный Cloudflare rate limiter, SHA-256 для хешированных API-ключей и fail-closed разбор конфигурации ключей.

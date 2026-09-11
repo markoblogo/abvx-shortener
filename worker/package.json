@@ -1,12 +1,13 @@
 {
   "name": "abvx-shortener-worker",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "npm run types && npm run lint && npm run typecheck && npm run test && npm run extension:check && npm run repo:check",
+    "check": "npm run types && npm run lint && npm run typecheck && npm run test && npm run cli:check && npm run extension:check && npm run repo:check",
+    "cli:check": "node --check ../bin/abvx-shorten && node ../bin/abvx-shorten --help",
     "extension:check": "node --check ../extension/popup.js && node --check ../extension/background.js && node ../scripts/validate-extension.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
