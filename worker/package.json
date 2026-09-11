@@ -6,24 +6,29 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "check": "npm run types && npm run lint && npm run typecheck && npm run test && npm run extension:check && npm run repo:check",
+    "extension:check": "node --check ../extension/popup.js && node --check ../extension/background.js && node ../scripts/validate-extension.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "types": "wrangler types",
     "migrate-kv": "node ./scripts/migrate-kv.mjs",
     "migrate-kv:dry": "DRY_RUN=true LOG_FORMAT=json MAX_KEYS=20 LIMIT=200 node ./scripts/migrate-kv.mjs",
     "migrate-kv:canary": "LOG_FORMAT=json MAX_KEYS=200 LIMIT=200 node ./scripts/migrate-kv.mjs",
+    "repo:check": "node ../scripts/validate-repo.mjs",
     "format": "prettier -w ."
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260124.0",
-    "@types/node": "^22.10.10",
-    "@typescript-eslint/eslint-plugin": "^8.61.0",
-    "@typescript-eslint/parser": "^8.61.0",
-    "eslint": "^9.17.0",
-    "prettier": "^3.4.2",
-    "typescript": "^5.7.3",
-    "vitest": "^3.0.0",
-    "wrangler": "^3.102.0",
+    "@cloudflare/vitest-plugin": "^1.1.7",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.2",
+    "@typescript-eslint/eslint-plugin": "^8.70.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "eslint": "^10.10.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.131.0",
     "zod": "^3.24.1"
   }
 }

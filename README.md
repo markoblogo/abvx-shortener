@@ -1,202 +1,168 @@
 # ABVX Shortener
 
-Self-hosted URL shortener on Cloudflare Workers + KV with operational control plane.
+Self-hosted short links on your own domain, powered by Cloudflare Workers and KV.
 
-Current milestone: **v0.3**.
+[![CI](https://github.com/markoblogo/abvx-shortener/actions/workflows/ci.yml/badge.svg)](https://github.com/markoblogo/abvx-shortener/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/markoblogo/abvx-shortener)](https://github.com/markoblogo/abvx-shortener/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-66f0c2.svg)](LICENSE)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+**[Live service](https://go.abvx.xyz)** · **[API reference](docs/api.md)** · **[Русская документация](README.ru.md)**
 
----
+![ABVX Shortener web interface](.github/assets/landing-v0.3.png)
 
-## Содержание
+ABVX Shortener gives individuals and small teams a compact link service without a third-party redirect platform:
 
-- [Quick start (Worker)](#quick-start-worker)
-- [Extension MV3](#extension-mv3)
-- [API v0.3](#api-v03)
-- [Trust / Security](#trust--security)
-- [Настройка / vars](#настройка--vars)
-- [Операционный запуск](#операционный-запуск)
-- [Migration v0.1 -> v0.3+](#migration-v01--v03)
+- deterministic slugs: the same normalized URL returns the same short link;
+- custom aliases, expiration, fallback destinations and `301`/`302` redirects;
+- authenticated link management, export, audit events and first-party counters;
+- a browser interface, command-line client and Chrome Manifest V3 extension;
+- no third-party analytics, advertising scripts or external UI dependencies.
 
----
+## Quick start
 
-## Quick start (Worker)
+Prerequisites: Node.js 22+ and a Cloudflare account with a domain managed by Cloudflare.
 
 ```bash
-cd worker
-npm i
+git clone https://github.com/markoblogo/abvx-shortener.git
+cd abvx-shortener/worker
+npm ci
 npx wrangler login
-npx wrangler kv namespace create "LINKS"
-npx wrangler secret put API_KEY
-npx wrangler deploy
+npx wrangler kv namespace create LINKS
 ```
 
-Для продакшена все переменные и секреты подхватятся из `wrangler.toml`/`wrangler`-конфига.
+Copy the returned namespace ID into `worker/wrangler.toml`, replacing the existing `LINKS` ID. Then create an API key and deploy:
 
-- health check: `GET /health`
-- короткая ссылка: `POST /api/shorten`
-- редирект: `GET /:slug`
+```bash
+npx wrangler secret put API_KEY
+npm run deploy
+```
 
----
+Attach a custom domain in **Cloudflare Dashboard → Workers & Pages → your Worker → Settings → Domains & Routes** and set `BASE_URL` in `wrangler.toml` to that HTTPS origin.
 
-## Extension MV3
+Verify the deployment:
 
-В `extension/` реализован расширенный рабочий UX:
+```bash
+curl --fail https://go.example.com/health
+```
 
-- popup: preview результата, copy/open, retry, история последних ссылок (10–20)
-- настраиваемый endpoint API (`apiBaseUrl`) и API key
-- background service worker с:
-  - `contextMenus` — «Shorten this page» и «Shorten this link»
-  - `commands`:
-    - `Ctrl+Shift+S` — shorten текущей вкладки
-    - `Alt+Shift+S` — открыть последний short
-  - `omnibox` keyword `abvx`
+Expected shape:
 
----
+```json
+{"ok":true,"version":"0.3.0","requestId":"…"}
+```
 
-## API v0.3
+## Create a link
 
-Сервис возвращает единый формат ошибок:
+Use the web form or call the API directly:
 
-- `{ code, message, requestId, details? }`.
+```bash
+curl --fail-with-body https://go.example.com/api/shorten \
+  --request POST \
+  --header 'content-type: application/json' \
+  --header 'X-API-Key: YOUR_KEY' \
+  --data '{"url":"https://example.com/long/path","customSlug":"demo"}'
+```
 
-Успешные ответы содержат предметные payload-поля (`slug`, `shortUrl`, `items`, ...), плюс `requestId` в большинстве случаев.
+The response includes the slug and ready-to-share URL:
 
-### Core
+```json
+{
+  "slug": "demo",
+  "shortUrl": "https://go.example.com/demo",
+  "created": true,
+  "requestId": "…"
+}
+```
 
-- `GET /health`
-- `GET /:slug` — redirect (авторизация применяется только для `private` ссылок)
-
-### Сокращение ссылок
-
-`POST /api/shorten`
-
-Body:
-
-- `url` (required)
-- `customSlug`, `overwrite`, `force`
-- `ttl` / `expiresAt`
-- `redirectType` (`301`|`302`)
-- `fallbackUrl`
-- `private`, `privateTokenRequired`, `visibility`
-
-Response:
-
-- `slug`, `shortUrl`, `created`, `alreadyExisted`, `createdBy`, `expiresAt`, `disabled`, `customSlug`, `redirectType`, `visibility`, `requestId`
-
-### Уровень управления ссылками
-
-- `GET /api/link/:slug` — метаданные ссылки
-- `PUT /api/link/:slug` — обновление `url`, `ttl/expiresAt`, `disabled`, `redirectType`, `fallbackUrl`, `private`
-- `DELETE /api/link/:slug` — soft-delete по умолчанию, `?hard=true` для hard-delete
-
-### Новые v0.3 endpoints
-
-- `GET /api/links?cursor=...&limit=...`
-  - фильтры: `disabled`, `expired`, `customSlug`, `createdBy`, `q`
-- `POST /api/links/bulk`
-  - `{ action: disable|restore|delete, slugs: [...], dryRun: true|false }`
-- `GET /api/links/export?format=json|csv`
-- `GET /api/stats?window=minute|hour|day`
-  - агрегаты: `redirect_hit`, `redirect_miss`, `expired_hit`, `disabled_hit`, `api_conflict`, `rate_limited`, `created`, `updated`, `deleted`, `private_denied`
-- `GET /api/events?cursor=...&type=create|update|delete|soft-delete|restore`
-
-### Бонусные возможности ссылок
-
-- настройка кода редиректа `301/302`
-- fallback для disabled/expired/private сценариев
-- soft-delete с последующим restore (через `bulk`/`events`)
-
----
-
-## Trust / Security
-
-### Endpoint hardening
-
-- Rate limit для `POST /api/shorten` по IP и API key (`RL:ip`, `RL:key`)
-- allowlist источников (`ALLOWED_ORIGINS`, `ALLOW_NO_ORIGIN`)
-- URL canonicalization + allow/deny домены (`ALLOW_URL_DOMAINS`, `DENY_URL_DOMAINS`)
-- опциональный precheck hook (`URL_PRECHECK_URL`)
-- блок локальных/частных сетевых адресов и небезопасных схем
-
-### Trust modes
-
-- `TRUST_MODE=personal` — обычный режим
-- `TRUST_MODE=readonly` — только чтение и статистика
-- `TRUST_MODE=readonly-create` — только `POST /api/shorten` и редиректы
-
-### API keys
-
-- legacy: единый `API_KEY`
-- phased rotation: `API_KEYS_JSON`
-  - `[{ "id": "writer-1", "role": "writer", "secret": "...", "secret_hash": "..." }]`
-  - роли: `reader`, `writer`, `admin`
-- рекомендованная схема: сначала legacy `API_KEY`, затем `API_KEYS_JSON`
-
----
-
-## Настройка / vars
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `BASE_URL` | `https://go.abvx.xyz` | base URL для returned short URL |
-| `RATE_LIMIT_WINDOW_SEC` | `60` | окно throttling для `/api/shorten` |
-| `RATE_LIMIT_MAX` | `30` | лимит в окне |
-| `ALLOWED_ORIGINS` | `` | comma-separated allowlist |
-| `ALLOW_NO_ORIGIN` | `false` | разрешить запросы без Origin |
-| `STRIP_TRAILING_SLASH` | `true` | нормализация URL |
-| `MAX_URL_LENGTH` | `2048` | жесткий лимит длины URL |
-| `DEFAULT_TTL_SECONDS` | `0` | дефолтное TTL для новых ссылок |
-| `TRUST_MODE` | `personal` | trust mode |
-| `ALLOW_URL_DOMAINS` | `` | allowlist целевых доменов |
-| `DENY_URL_DOMAINS` | `` | denylist целевых доменов |
-| `URL_PRECHECK_URL` | `` | optional external precheck |
-| `URL_PRECHECK_TIMEOUT_MS` | `1500` | timeout внешнего precheck |
-| `URL_PRECHECK_FAIL_OPEN` | `false` | fallback при падении precheck |
-| `DEFAULT_REDIRECT_TYPE` | `302` | дефолтный код редиректа |
-| `STATS_RETENTION_DAYS` | `30` | метрики + события retention (days, approx) |
-| `API_KEYS_JSON` | `` | JSON для phased key rotation |
-| `LINKS_INDEX_D1_URL` | `` | опциональный путь к D1 для v0.4+ |
-
----
-
-## Операционный запуск
-
-- Runbook миграции: `docs/migration.md`
-- Операционный гайд: `docs/ops.md`
-- Чеклист релиза: `RELEASE_CHECKLIST.md`
+## Clients
 
 ### CLI
 
+The repository includes a dependency-free Node.js client:
+
 ```bash
-./bin/abvx-shorten shorten https://example.com --custom-slug promo
+export ABVX_ENDPOINT=https://go.example.com
+export ABVX_API_KEY=YOUR_KEY
+./bin/abvx-shorten shorten https://example.com/article --custom-slug article
+./bin/abvx-shorten list --limit 20
 ./bin/abvx-shorten stats --window hour
-./bin/abvx-shorten list --limit 20 --disabled false
-./bin/abvx-shorten bulk-disable abc123 old-link --dry-run true
 ```
 
-Минимальная стратегия миграции KV:
+When using `API_KEYS_JSON`, also set `ABVX_API_KEY_ID` or pass `--api-key-id`.
+
+### Chrome extension
+
+1. Download `abvx-shortener-extension-v0.3.0.zip` from the release and unpack it.
+2. Open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**.
+3. Choose the unpacked `extension` directory and enter your endpoint and API key.
+
+The extension requests permanent host access only for `go.abvx.xyz`. A custom endpoint triggers Chrome's optional permission prompt.
+
+## Security model
+
+- API operations require `API_KEY` or a role-based entry in `API_KEYS_JSON`.
+- Browser requests are same-origin by default; additional origins must appear in `ALLOWED_ORIGINS`.
+- Non-browser clients are enabled by default with `ALLOW_NO_ORIGIN=true`.
+- Target and fallback URLs accept only public HTTP(S) destinations.
+- Native Cloudflare rate limiting protects link creation in production.
+- API key collections belong in a Wrangler secret, never in `wrangler.toml`.
+
+Create a SHA-256 entry for role-based key rotation:
+
+```bash
+node -e "crypto.subtle.digest('SHA-256',new TextEncoder().encode(process.argv[1])).then(b=>console.log('sha256:'+Buffer.from(b).toString('hex')))" 'YOUR_KEY'
+npx wrangler secret put API_KEYS_JSON
+```
+
+`API_KEYS_JSON` accepts entries such as:
+
+```json
+[{"id":"writer-1","role":"writer","secret_hash":"sha256:…"}]
+```
+
+Malformed key configuration fails closed. See [Security Policy](SECURITY.md) and [Configuration](docs/configuration.md).
+
+## API and operations
+
+| Area | Endpoints |
+|---|---|
+| Core | `GET /health`, `POST /api/shorten`, `GET /:slug` |
+| Link management | `GET/PUT/DELETE /api/link/:slug`, `GET /api/links` |
+| Bulk and export | `POST /api/links/bulk`, `GET /api/links/export` |
+| Operations | `GET /api/stats`, `GET /api/events` |
+
+Use [docs/api.md](docs/api.md) for examples and [openapi.yaml](openapi.yaml) for tooling. Operational counters are first-party and stored in your KV namespace; they are approximate under concurrent traffic.
+
+## Project layout
+
+```text
+worker/       Cloudflare Worker, tests and deployment config
+extension/    Chrome Manifest V3 extension
+bin/          dependency-free CLI
+docs/         API, architecture, configuration and operations
+```
+
+## Development
 
 ```bash
 cd worker
-npm run migrate-kv:dry      # preview
-npm run migrate-kv:canary   # canary + write
-npm run migrate-kv          # controlled rollout
+npm ci
+npm run check
+npx wrangler dev
 ```
 
----
+The test suite includes Cloudflare's Vitest runtime integration with a real local KV binding. CI also validates the extension, audits dependencies and performs a deployment dry run.
 
-## Migration `v0.1 -> v0.3`
+## Documentation
 
-- v0.1 хранил plain URL в KV
-- v0.3 работает с JSON `link-record` (metadata, TTL, audit-ready fields)
+- [Architecture](docs/architecture.md)
+- [API reference](docs/api.md)
+- [Configuration](docs/configuration.md)
+- [Operations and upgrades](docs/ops.md)
+- [KV migration](docs/migration.md)
+- [Git Tweet integration](docs/integrations.md)
+- [Contributing](CONTRIBUTING.md)
 
-Смотрите `docs/migration.md` и `RELEASE_CHECKLIST.md` для incident checklist.
+## License
 
----
-
-## Compatibility
-
-- Worker: Cloudflare Workers
-- Extension: Chrome MV3 (`chromium`-базированные браузеры)
-- Operations: `docs/ops.md`
+MIT © ABVX

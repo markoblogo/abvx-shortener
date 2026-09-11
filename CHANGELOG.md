@@ -1,6 +1,19 @@
 # Changelog
 
-## v0.3.0
+## v0.3.0 — 2026-09-11
+
+- Restored the browser shortening form and refreshed the public product page without external UI dependencies.
+- Hardened API authentication and authorization:
+  - SHA-256 role-key hashes replace the obsolete 32-bit format;
+  - malformed `API_KEYS_JSON` fails closed;
+  - writer keys can modify only their own links;
+  - token-bound private links are limited to their creator and admins;
+  - same-origin/CORS and authenticated non-browser behavior are explicit.
+- Added native Cloudflare rate limiting, generated Worker binding types, Workers Logs and non-blocking redirect bookkeeping.
+- Updated to Wrangler 4 and Cloudflare's Vitest runtime integration.
+- Added extension permission minimization, role-key IDs and safe DOM rendering.
+- Added OpenAPI, English/Russian onboarding, architecture, configuration, security, operations and integration docs.
+- Added dependency automation, release assets and a gated production deployment workflow.
 
 - Added operational APIs:
   - `GET /api/stats`

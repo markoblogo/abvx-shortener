@@ -4,10 +4,10 @@
     "lib": ["ES2022"],
     "module": "ES2022",
     "moduleResolution": "Bundler",
-    "types": ["@cloudflare/workers-types", "node"],
+    "types": ["node", "@cloudflare/vitest-plugin/types"],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src", "tests"]
+  "include": ["worker-configuration.d.ts", "src", "tests", "vitest.config.ts"]
 }

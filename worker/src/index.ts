@@ -41,6 +41,29 @@ function html(body: string, init: ResponseInit = {}) {
   return new Response(body, { ...init, headers });
 }
 
+function finalizeResponse(response: Response, request: Request, env: WorkerEnv): Response {
+  const headers = new Headers(response.headers);
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "no-referrer");
+  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
+
+  const origin = request.headers.get("origin");
+  const cfg = getConfig(env);
+  if (origin && isAllowedRequestOrigin(request, cfg.allowedOrigins, cfg.allowNoOrigin)) {
+    headers.set("access-control-allow-origin", origin);
+    headers.append("vary", "Origin");
+  }
+
+  if ((headers.get("content-type") || "").startsWith("text/html")) {
+    headers.set(
+      "content-security-policy",
+      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    );
+  }
+
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 function makeShortUrl(baseUrl: string, slug: string) {
   return `${baseUrl.replace(/\/$/, "")}/${slug}`;
 }
@@ -164,15 +187,14 @@ function fallbackResponse(status: number, request: Request, requestId: string, r
   return new Response(reason, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
-function isPrivateAllowed(actorId: string | null, cfgPrivate: boolean, privateTokenRequired: boolean | undefined, request: Request): boolean {
-  if (!cfgPrivate) return true;
-  if (!request.headers.has("X-API-Key")) {
-    return false;
-  }
-  if (!privateTokenRequired) {
-    return actorId !== null;
-  }
-  return actorId !== null;
+function isPrivateAllowed(
+  actor: Awaited<ReturnType<typeof authenticateRequest>>,
+  link: LinkRecord,
+): boolean {
+  if (!link.private) return true;
+  if (!actor) return false;
+  if (!link.privateTokenRequired) return true;
+  return actor.role === "admin" || actor.id === link.createdBy;
 }
 
 async function ensureAuthorized(
@@ -245,6 +267,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
   }
 
   let normalizedUrl: string;
+  let normalizedFallbackUrl: string | undefined;
   try {
     normalizedUrl = await canonicalizeUrlWithPrecheck(parsed.data.url, env, {
       stripTrailingSlash: cfg.stripTrailingSlash,
@@ -254,6 +277,16 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
         denyUrlDomains: cfg.denyUrlDomains,
       },
     });
+    normalizedFallbackUrl = parsed.data.fallbackUrl
+      ? await canonicalizeUrlWithPrecheck(parsed.data.fallbackUrl, env, {
+          stripTrailingSlash: cfg.stripTrailingSlash,
+          maxLength: cfg.maxUrlLength,
+          trustConfig: {
+            allowUrlDomains: cfg.allowUrlDomains,
+            denyUrlDomains: cfg.denyUrlDomains,
+          },
+        })
+      : undefined;
   } catch (err) {
     await incrementMetric(env.LINKS, "api_conflict", "minute");
     return jsonError("bad_request", mapError(err), requestId, 400);
@@ -276,6 +309,9 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
 
     const existing = await getLink(env.LINKS, requestedSlug, true, true);
     if (existing) {
+      if (actor?.role !== "admin" && actor?.id !== existing.createdBy) {
+        return jsonError("forbidden", "Writers can only reuse or overwrite links they created", requestId, 403);
+      }
       if (existing.url === normalizedUrl && existing.disabled !== true) {
         return toManagedResponse(env.BASE_URL, requestedSlug, requestId, existing, false, cfg);
       }
@@ -292,7 +328,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
         createdBy: actorId,
         expiresAt: getExpiresAt(parsed.data.ttl, parsed.data.expiresAt),
         redirectType: parsed.data.redirectType || cfg.defaultRedirectType,
-        fallbackUrl: parsed.data.fallbackUrl,
+        fallbackUrl: normalizedFallbackUrl,
         private: parsed.data.private || false,
         privateTokenRequired: parsed.data.privateTokenRequired ?? false,
         visibility: parsed.data.visibility || (parsed.data.private ? "private" : "public"),
@@ -321,7 +357,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
       disabled: false,
       customSlug: true,
       redirectType: parsed.data.redirectType || cfg.defaultRedirectType,
-      fallbackUrl: parsed.data.fallbackUrl,
+      fallbackUrl: normalizedFallbackUrl,
       private: parsed.data.private || false,
       privateTokenRequired: parsed.data.privateTokenRequired ?? false,
       visibility: parsed.data.visibility || (parsed.data.private ? "private" : "public"),
@@ -349,7 +385,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
       disabled: false,
       customSlug: false,
       redirectType: parsed.data.redirectType || cfg.defaultRedirectType,
-      fallbackUrl: parsed.data.fallbackUrl,
+      fallbackUrl: normalizedFallbackUrl,
       private: parsed.data.private || false,
       privateTokenRequired: parsed.data.privateTokenRequired ?? false,
       visibility: parsed.data.visibility || (parsed.data.private ? "private" : "public"),
@@ -383,7 +419,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
     disabled: false,
     customSlug: false,
     redirectType: parsed.data.redirectType || cfg.defaultRedirectType,
-    fallbackUrl: parsed.data.fallbackUrl,
+    fallbackUrl: normalizedFallbackUrl,
     private: parsed.data.private || false,
     privateTokenRequired: parsed.data.privateTokenRequired ?? false,
     visibility: parsed.data.visibility || (parsed.data.private ? "private" : "public"),
@@ -440,16 +476,31 @@ async function handleUpdateLink(slug: string, env: WorkerEnv, requestId: string,
     return jsonError("not_found", "Link not found", requestId, 404);
   }
 
-  const nextUrl = parsed.data.url
-    ? await canonicalizeUrlWithPrecheck(parsed.data.url, env, {
+  if (actor?.role !== "admin" && actor?.id !== existing.createdBy) {
+    return jsonError("forbidden", "Writers can only modify links they created", requestId, 403);
+  }
+
+  const canonicalizeManagedUrl = (value: string) =>
+    canonicalizeUrlWithPrecheck(value, env, {
         stripTrailingSlash: cfg.stripTrailingSlash,
         maxLength: cfg.maxUrlLength,
         trustConfig: {
           allowUrlDomains: cfg.allowUrlDomains,
           denyUrlDomains: cfg.denyUrlDomains,
         },
-      })
-    : existing.url;
+      });
+  let nextUrl: string;
+  let nextFallbackUrl: string | undefined;
+  try {
+    nextUrl = parsed.data.url ? await canonicalizeManagedUrl(parsed.data.url) : existing.url;
+    nextFallbackUrl = parsed.data.fallbackUrl
+      ? await canonicalizeManagedUrl(parsed.data.fallbackUrl)
+      : parsed.data.fallbackUrl === ""
+        ? undefined
+        : existing.fallbackUrl;
+  } catch (error) {
+    return jsonError("bad_request", mapError(error), requestId, 400);
+  }
 
   if (parsed.data.url && existing.url !== nextUrl && !parsed.data.overwrite && !parsed.data.force) {
     await incrementMetric(env.LINKS, "api_conflict", "minute");
@@ -466,7 +517,7 @@ async function handleUpdateLink(slug: string, env: WorkerEnv, requestId: string,
         ? Date.now() + parsed.data.ttl * 1000
         : existing.expiresAt,
     redirectType: parsed.data.redirectType || existing.redirectType,
-    fallbackUrl: parsed.data.fallbackUrl ?? existing.fallbackUrl,
+    fallbackUrl: nextFallbackUrl,
     private: parsed.data.private ?? existing.private,
     privateTokenRequired: parsed.data.privateTokenRequired ?? existing.privateTokenRequired,
     visibility: parsed.data.visibility || existing.visibility,
@@ -517,7 +568,11 @@ async function handleDeleteLink(slug: string, env: WorkerEnv, requestId: string,
     return jsonError("not_found", "Link not found", requestId, 404);
   }
 
-  const hard = request.url.includes("hard=true");
+  if (actor?.role !== "admin" && actor?.id !== existing.createdBy) {
+    return jsonError("forbidden", "Writers can only delete links they created", requestId, 403);
+  }
+
+  const hard = new URL(request.url).searchParams.get("hard") === "true";
   if (hard) {
     await hardDeleteLink(env.LINKS, slug);
     await emitAudit(
@@ -557,7 +612,7 @@ async function handleDeleteLink(slug: string, env: WorkerEnv, requestId: string,
 }
 
 function parseCursor(raw: string | null): string {
-  return raw ? decodeURIComponent(raw) : "";
+  return raw || "";
 }
 
 async function handleListLinks(request: Request, env: WorkerEnv, requestId: string): Promise<Response> {
@@ -857,6 +912,12 @@ async function handleStats(request: Request, env: WorkerEnv, requestId: string):
         : now - 30 * 24 * 60 * 60 * 1000);
   const until = parsed.data.until ?? now;
 
+  const bucketSize = parsed.data.window === "minute" ? 60_000 : parsed.data.window === "hour" ? 3_600_000 : 86_400_000;
+  const bucketCount = Math.floor((until - since) / bucketSize) + 1;
+  if (until < since || bucketCount > 500) {
+    return jsonError("bad_request", "Stats range must contain between 1 and 500 buckets", requestId, 400);
+  }
+
   const stats = await getStats(env.LINKS, parsed.data.window, since, until);
 
   return json({
@@ -873,6 +934,7 @@ async function handleRedirect(
   request: Request,
   env: WorkerEnv,
   requestId: string,
+  ctx?: ExecutionContext,
 ): Promise<Response> {
   const cfg = getConfig(env);
   if (!slug || slug === "api" || slug === "health") {
@@ -897,89 +959,113 @@ async function handleRedirect(
   }
 
   const actor = await authenticateRequest(request, env);
-  const actorId = actor?.id || null;
-  if (!isPrivateAllowed(actorId, Boolean(link.private), link.privateTokenRequired, request)) {
+  if (!isPrivateAllowed(actor, link)) {
     await incrementMetric(env.LINKS, "private_denied", "minute");
-    return jsonError("unauthorized", "Private link requires valid token", requestId, actorId ? 403 : 401);
+    return jsonError("unauthorized", "Private link requires an authorized token", requestId, actor ? 403 : 401);
   }
 
-  await incrementMetric(env.LINKS, "redirect_hit", "minute");
   const touched = shouldIncrementAfterRead(link);
-  await saveLink(env.LINKS, touched);
+  const postResponse = Promise.all([
+    incrementMetric(env.LINKS, "redirect_hit", "minute"),
+    saveLink(env.LINKS, touched),
+  ]).then(() => undefined);
+  if (ctx) {
+    ctx.waitUntil(postResponse);
+  } else {
+    await postResponse;
+  }
 
   const redirectType = link.redirectType || cfg.defaultRedirectType;
   return Response.redirect(link.url, Number(redirectType));
 }
 
 export default {
-  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv, ctx?: ExecutionContext): Promise<Response> {
     const requestId = requestIdFromReq(request);
     const url = new URL(request.url);
     const pathname = url.pathname;
     const normalizedPath = pathname === "/" ? "/" : pathname.replace(/\/$/, "");
+    const finish = async (response: Response | Promise<Response>) => finalizeResponse(await response, request, env);
 
     try {
+      if (request.method === "OPTIONS" && normalizedPath.startsWith("/api/")) {
+        const cfg = getConfig(env);
+        if (!isAllowedRequestOrigin(request, cfg.allowedOrigins, cfg.allowNoOrigin)) {
+          return finish(jsonError("forbidden", "Origin is not allowed", requestId, 403));
+        }
+        return finish(
+          new Response(null, {
+            status: 204,
+            headers: {
+              "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+              "access-control-allow-headers": "Content-Type, X-API-Key, X-API-Key-Id",
+              "access-control-max-age": "86400",
+            },
+          }),
+        );
+      }
+
       if (normalizedPath === "/" && (request.method === "GET" || request.method === "HEAD")) {
-        return html(LANDING_HTML, { status: 200 });
+        return finish(html(LANDING_HTML, { status: 200 }));
       }
 
       if (normalizedPath === "/health") {
-        return json({ ok: true, requestId });
+        return finish(json({ ok: true, version: "0.3.0", requestId }));
       }
 
       if (normalizedPath === "/api/shorten") {
         if (request.method !== "POST") {
-          return jsonError("method_not_allowed", "Method not allowed", requestId, 405);
+          return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
         }
-        return handleShorten(request, env, requestId);
+        return finish(handleShorten(request, env, requestId));
       }
 
       if (normalizedPath === "/api/links") {
-        if (request.method === "GET") return handleListLinks(request, env, requestId);
-        return jsonError("method_not_allowed", "Method not allowed", requestId, 405);
+        if (request.method === "GET") return finish(handleListLinks(request, env, requestId));
+        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath === "/api/links/bulk") {
-        if (request.method === "POST") return handleBulkLinks(request, env, requestId);
-        return jsonError("method_not_allowed", "Method not allowed", requestId, 405);
+        if (request.method === "POST") return finish(handleBulkLinks(request, env, requestId));
+        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath === "/api/links/export") {
-        if (request.method === "GET") return handleExportLinks(request, env, requestId);
-        return jsonError("method_not_allowed", "Method not allowed", requestId, 405);
+        if (request.method === "GET") return finish(handleExportLinks(request, env, requestId));
+        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath === "/api/stats") {
-        if (request.method === "GET") return handleStats(request, env, requestId);
-        return jsonError("method_not_allowed", "Method not allowed", requestId, 405);
+        if (request.method === "GET") return finish(handleStats(request, env, requestId));
+        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath === "/api/events") {
-        if (request.method === "GET") return handleEvents(request, env, requestId);
-        return jsonError("method_not_allowed", "Method not allowed", requestId, 405);
+        if (request.method === "GET") return finish(handleEvents(request, env, requestId));
+        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath.startsWith("/api/link/")) {
         const slug = extractSlug(normalizedPath.slice("/api/link/".length));
         if (!slug) {
-          return jsonError("bad_request", "Slug is required", requestId, 400);
+          return finish(jsonError("bad_request", "Slug is required", requestId, 400));
         }
 
-        if (request.method === "GET") return handleGetLink(slug, env, requestId, request);
-        if (request.method === "PUT") return handleUpdateLink(slug, env, requestId, request);
-        if (request.method === "DELETE") return handleDeleteLink(slug, env, requestId, request);
+        if (request.method === "GET") return finish(handleGetLink(slug, env, requestId, request));
+        if (request.method === "PUT") return finish(handleUpdateLink(slug, env, requestId, request));
+        if (request.method === "DELETE") return finish(handleDeleteLink(slug, env, requestId, request));
 
-        return jsonError("method_not_allowed", "Method not allowed", requestId, 405);
+        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (request.method === "GET" || request.method === "HEAD") {
         const slug = extractSlug(normalizedPath);
-        return handleRedirect(slug, request, env, requestId);
+        return finish(handleRedirect(slug, request, env, requestId, ctx));
       }
 
-      return new Response("Not found", { status: 404 });
+      return finish(new Response("Not found", { status: 404 }));
     } catch (error) {
-      return jsonError("internal_error", mapError(error), requestId, 500);
+      return finish(jsonError("internal_error", mapError(error), requestId, 500));
     }
   },
 };

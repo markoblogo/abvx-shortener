@@ -36,10 +36,10 @@
     "storage",
     "tabs",
     "contextMenus",
-    "commands",
     "notifications"
   ],
-  "host_permissions": ["https://*/*"],
+  "host_permissions": ["https://go.abvx.xyz/*"],
+  "optional_host_permissions": ["https://*/*"],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

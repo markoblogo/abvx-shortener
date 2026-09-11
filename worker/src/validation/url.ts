@@ -75,7 +75,7 @@ async function runSafetyPrecheck(env: WorkerEnv, rawUrl: string, hostname: strin
     });
 
     if (!response.ok) {
-      if (env.URL_PRECHECK_FAIL_OPEN === "1" || env.URL_PRECHECK_FAIL_OPEN === "true") {
+      if (getConfig(env).urlPrecheckFailOpen) {
         return;
       }
       throw new Error("URL precheck rejected by external policy");

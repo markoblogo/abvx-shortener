@@ -12,19 +12,20 @@ export interface ApiActor {
 function extractOrigin(value: string | null): string {
   if (!value) return "";
   try {
-    return new URL(value).origin.toLowerCase();
+    const parsed = new URL(value);
+    if (parsed.protocol === "chrome-extension:") {
+      return `chrome-extension://${parsed.host.toLowerCase()}`;
+    }
+    return parsed.origin.toLowerCase();
   } catch {
     return "";
   }
 }
 
-function hashLegacy(value: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16);
+export async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function safeEquals(left: string, right: string): boolean {
@@ -36,21 +37,25 @@ function safeEquals(left: string, right: string): boolean {
   return diff === 0;
 }
 
-function parseApiKeys(raw: string | undefined): Array<{ id: string; role: ApiRole; secret?: string; secret_hash?: string }> {
+function parseApiKeys(raw: string): Array<{ id: string; role: ApiRole; secret?: string; secret_hash?: string }> | null {
   try {
-    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((entry: any) => entry && typeof entry.id === "string")
-      .map((entry: any) => ({
-        id: String(entry.id),
-        role: entry.role === "reader" ? "reader" : entry.role === "admin" ? "admin" : "writer",
-        secret: typeof entry.secret === "string" ? entry.secret : undefined,
-        secret_hash: typeof entry.secret_hash === "string" ? entry.secret_hash : undefined,
-      }));
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+
+    const keys = parsed.map((entry: unknown) => {
+      if (!entry || typeof entry !== "object") return null;
+      const candidate = entry as Record<string, unknown>;
+      if (typeof candidate.id !== "string" || !candidate.id.trim()) return null;
+      if (!(["reader", "writer", "admin"] as const).includes(candidate.role as ApiRole)) return null;
+      const secret = typeof candidate.secret === "string" && candidate.secret ? candidate.secret : undefined;
+      const secretHash = typeof candidate.secret_hash === "string" && candidate.secret_hash ? candidate.secret_hash.toLowerCase() : undefined;
+      if ((!secret && !secretHash) || (secretHash && !/^sha256:[a-f0-9]{64}$/.test(secretHash))) return null;
+      return { id: candidate.id, role: candidate.role as ApiRole, secret, secret_hash: secretHash };
+    });
+
+    return keys.some((key) => key === null) ? null : (keys as Array<{ id: string; role: ApiRole; secret?: string; secret_hash?: string }>);
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -58,26 +63,27 @@ export function getApiKey(request: Request): string {
   return request.headers.get("X-API-Key") || "";
 }
 
-export function getActorIdFromKey(key: string): string {
-  return key ? `key-${hashLegacy(key).slice(0, 10)}` : "anonymous";
+export async function getActorIdFromKey(key: string): Promise<string> {
+  return key ? `legacy-${(await sha256Hex(key)).slice(0, 12)}` : "anonymous";
 }
 
 export function isAllowedRequestOrigin(request: Request, allowedOrigins: string[], allowNoOrigin: boolean): boolean {
   const origin = request.headers.get("origin");
   const referer = request.headers.get("referer");
-  const integrationFlag = request.headers.get("X-Integration") === "true";
   const candidate = extractOrigin(origin || "") || extractOrigin(referer || "");
 
   if (!candidate) {
-    return (allowNoOrigin || integrationFlag) || false;
+    return allowNoOrigin;
+  }
+
+  const ownOrigin = new URL(request.url).origin.toLowerCase();
+  if (candidate === ownOrigin) {
+    return true;
   }
 
   if (candidate.startsWith("chrome-extension://")) {
-    return true;
-  }
-
-  if (!allowedOrigins.length) {
-    return true;
+    const configuredExtensions = allowedOrigins.filter((item) => item.startsWith("chrome-extension://"));
+    return configuredExtensions.length === 0 || configuredExtensions.includes(candidate);
   }
 
   return allowedOrigins.includes(candidate);
@@ -89,8 +95,10 @@ export async function authenticateRequest(request: Request, env: WorkerEnv): Pro
     return null;
   }
 
-  const configuredKeys = parseApiKeys(env.API_KEYS_JSON);
-  if (configuredKeys.length) {
+  const rawKeyConfig = env.API_KEYS_JSON?.trim();
+  if (rawKeyConfig) {
+    const configuredKeys = parseApiKeys(rawKeyConfig);
+    if (!configuredKeys) return null;
     const keyId = request.headers.get("X-API-Key-Id") || "";
     if (!keyId) {
       return null;
@@ -102,7 +110,7 @@ export async function authenticateRequest(request: Request, env: WorkerEnv): Pro
     }
 
     if (match.secret_hash) {
-      const hashed = hashLegacy(key);
+      const hashed = `sha256:${await sha256Hex(key)}`;
       if (safeEquals(hashed, match.secret_hash)) {
         return { id: match.id, role: match.role, requestApiKey: key };
       }
@@ -115,9 +123,9 @@ export async function authenticateRequest(request: Request, env: WorkerEnv): Pro
     return null;
   }
 
-  if (Boolean(env.API_KEY) && safeEquals(key, env.API_KEY)) {
+  if (env.API_KEY && safeEquals(key, env.API_KEY)) {
     return {
-      id: getActorIdFromKey(key),
+      id: await getActorIdFromKey(key),
       role: "admin",
       requestApiKey: key,
     };

@@ -3,6 +3,9 @@ import tsParser from "@typescript-eslint/parser";
 import tseslint from "@typescript-eslint/eslint-plugin";
 
 export default [
+  {
+    ignores: ["worker-configuration.d.ts", ".wrangler/**", "coverage/**", "dist/**"],
+  },
   js.configs.recommended,
   {
     files: ["**/*.{js,mjs,ts}"],
@@ -10,6 +13,8 @@ export default [
       globals: {
         console: "readonly",
         KVNamespace: "readonly",
+        RateLimit: "readonly",
+        ExecutionContext: "readonly",
         Request: "readonly",
         Response: "readonly",
         ResponseInit: "readonly",
