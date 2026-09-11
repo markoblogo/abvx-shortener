@@ -1,6 +1,7 @@
 const DEFAULT_STATE = {
   apiBaseUrl: "https://go.abvx.xyz",
   apiKey: "",
+  apiKeyId: "",
   customSlug: "",
   overwrite: false,
   ttl: "",
@@ -17,6 +18,7 @@ const nodes = {
   form: $("shortenForm"),
   apiBaseUrl: $("apiBaseUrl"),
   apiKey: $("apiKey"),
+  apiKeyId: $("apiKeyId"),
   customSlug: $("customSlug"),
   overwrite: $("overwrite"),
   ttl: $("ttl"),
@@ -64,36 +66,42 @@ function shortHistory(history) {
 }
 
 function renderHistory(history) {
+  nodes.history.replaceChildren();
   if (!history.length) {
-    nodes.history.innerHTML = '<div class="muted">No history yet.</div>';
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = "No history yet.";
+    nodes.history.append(empty);
     return;
   }
 
-  nodes.history.innerHTML = history
-    .map(
-      (item) => `
-    <div class="history-item" data-url="${item.shortUrl}">
-      <a href="${item.shortUrl}" target="_blank" rel="noreferrer">${item.shortUrl}</a>
-      <div class="muted">→ ${item.target}</div>
-      <div class="muted">${new Date(item.createdAt).toLocaleString()}</div>
-    </div>
-  `,
-    )
-    .join("");
-
-  nodes.history.querySelectorAll(".history-item").forEach((row) => {
-    const link = row.getAttribute("data-url");
+  history.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "history-item";
+    const anchor = document.createElement("a");
+    anchor.href = item.shortUrl;
+    anchor.target = "_blank";
+    anchor.rel = "noreferrer";
+    anchor.textContent = item.shortUrl;
+    const target = document.createElement("div");
+    target.className = "muted";
+    target.textContent = `→ ${item.target}`;
+    const created = document.createElement("div");
+    created.className = "muted";
+    created.textContent = new Date(item.createdAt).toLocaleString();
+    row.append(anchor, target, created);
     row.addEventListener("click", (event) => {
       if (event.target && event.target.tagName === "A") return;
-      if (!link) return;
-      openLink(link);
+      openLink(item.shortUrl);
     });
+    nodes.history.append(row);
   });
 }
 
 function fillForm(config) {
   nodes.apiBaseUrl.value = config.apiBaseUrl || DEFAULT_STATE.apiBaseUrl;
   nodes.apiKey.value = config.apiKey || "";
+  nodes.apiKeyId.value = config.apiKeyId || "";
   nodes.customSlug.value = config.customSlug || "";
   nodes.overwrite.checked = Boolean(config.overwrite);
   nodes.ttl.value = String(config.ttl || "");
@@ -118,6 +126,15 @@ function normalizeApiBase(raw) {
     throw new Error("Shortener endpoint must be https://");
   }
   return trimmed;
+}
+
+async function ensureEndpointPermission(apiBaseUrl) {
+  const origin = `${new URL(apiBaseUrl).origin}/*`;
+  if (origin === "https://go.abvx.xyz/*") return;
+  const granted = await chrome.permissions.contains({ origins: [origin] });
+  if (granted) return;
+  const approved = await chrome.permissions.request({ origins: [origin] });
+  if (!approved) throw new Error("Permission to access this endpoint was not granted");
 }
 
 function buildShortenPayload(url, state) {
@@ -154,6 +171,7 @@ async function callShorten(state) {
     headers: {
       "content-type": "application/json",
       "X-API-Key": state.apiKey,
+      ...(state.apiKeyId ? { "X-API-Key-Id": state.apiKeyId } : {}),
     },
     body: JSON.stringify(payload),
   });
@@ -243,6 +261,7 @@ nodes.form.addEventListener("submit", async (event) => {
     const config = {
       apiBaseUrl: normalizeApiBase(nodes.apiBaseUrl.value),
       apiKey: nodes.apiKey.value.trim(),
+      apiKeyId: nodes.apiKeyId.value.trim(),
       customSlug: nodes.customSlug.value.trim(),
       overwrite: Boolean(nodes.overwrite.checked),
       ttl: nodes.ttl.value.trim(),
@@ -252,6 +271,8 @@ nodes.form.addEventListener("submit", async (event) => {
     if (!config.apiKey) {
       throw new Error("API key is required");
     }
+
+    await ensureEndpointPermission(config.apiBaseUrl);
 
     const targetUrl = nodes.urlInput.value.trim();
     if (!targetUrl) {

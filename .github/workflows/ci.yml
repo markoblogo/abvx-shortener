@@ -4,51 +4,28 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  ci:
+  verify:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: worker/package-lock.json
-
-      - name: Install worker deps
+      - name: Install dependencies
         working-directory: worker
         run: npm ci
-
-      - name: Lint
+      - name: Check code, Cloudflare runtime, extension, and docs
         working-directory: worker
-        run: npm run lint
-
-      - name: Typecheck
+        run: npm run check
+      - name: Audit dependencies
         working-directory: worker
-        run: npm run typecheck
-
-      - name: Test
+        run: npm audit --audit-level=high
+      - name: Verify deployment bundle
         working-directory: worker
-        run: npm run test
-
-      - name: Install extension deps (optional)
-        run: |
-          if [ -f extension/package-lock.json ] || [ -f extension/package.json ]; then
-            cd extension
-            npm ci
-          else
-            echo "No extension lockfile/package found, skipping"
-          fi
-
-      - name: Extension lint (optional)
-        run: |
-          if [ -f extension/package.json ] && [ -f extension/package-lock.json ] && npm pkg get scripts.lint >/dev/null 2>&1; then
-            cd extension
-            npm run lint
-          else
-            echo "No extension lint script configured, skipping"
-          fi
+        run: npx wrangler deploy --dry-run --outdir ../dist

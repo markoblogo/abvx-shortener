@@ -1,0 +1,2 @@
+API_KEY=replace-with-a-long-random-value
+# API_KEYS_JSON=[{"id":"writer-1","role":"writer","secret_hash":"sha256:..."}]

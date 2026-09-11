@@ -258,14 +258,12 @@ async function main() {
           status: "error",
           error: error instanceof Error ? error.message : String(error),
         });
-        throw error;
       }
     }
 
     const info = payload.result_info || {};
     const nextCursor = info.cursor || "";
     if (!nextCursor) {
-      done = true;
       break;
     }
     cursor = nextCursor;
@@ -295,6 +293,7 @@ async function main() {
     maxKeys,
     limit: MAX_PER_PAGE,
   });
+  if (errorCount > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {

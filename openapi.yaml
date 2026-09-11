@@ -1,0 +1,230 @@
+openapi: 3.1.0
+info:
+  title: ABVX Shortener API
+  version: 0.3.0
+  description: Self-hosted short-link creation and management API.
+servers:
+  - url: https://go.abvx.xyz
+security:
+  - apiKey: []
+paths:
+  /health:
+    get:
+      security: []
+      summary: Check Worker availability
+      responses:
+        "200":
+          description: Worker is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /api/shorten:
+    post:
+      summary: Create or reuse a short link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShortenRequest"
+      responses:
+        "200":
+          description: Link created or reused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /api/link/{slug}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+    get:
+      summary: Read link metadata
+      responses:
+        "200":
+          description: Link metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Link" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      summary: Update a managed link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLinkRequest"
+      responses:
+        "200":
+          description: Updated link
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Link" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Soft-delete or permanently delete a link
+      parameters:
+        - name: hard
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200": { description: Link disabled or deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/links:
+    get:
+      summary: List managed links
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: disabled, in: query, schema: { type: boolean } }
+        - { name: expired, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Link page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, done, requestId]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Link" } }
+                  nextCursor: { type: string }
+                  done: { type: boolean }
+                  requestId: { type: string }
+  /api/links/bulk:
+    post:
+      summary: Disable, restore, or delete links as an admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, slugs]
+              properties:
+                action: { type: string, enum: [disable, restore, delete] }
+                slugs: { type: array, minItems: 1, items: { type: string } }
+                dryRun: { type: boolean, default: false }
+      responses:
+        "200": { description: Per-link operation results }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/links/export:
+    get:
+      summary: Export links as an admin
+      parameters:
+        - { name: format, in: query, schema: { type: string, enum: [json, csv], default: json } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 5000, default: 1000 } }
+      responses:
+        "200": { description: JSON page or CSV document }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/stats:
+    get:
+      summary: Read approximate operational counters
+      parameters:
+        - { name: window, in: query, schema: { type: string, enum: [minute, hour, day], default: minute } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: until, in: query, schema: { type: string, format: date-time } }
+      responses:
+        "200": { description: Counter buckets }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/events:
+    get:
+      summary: Read the audit-event stream
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: type, in: query, schema: { type: string, enum: [create, update, delete, soft-delete, restore] } }
+      responses:
+        "200": { description: Audit-event page }
+  /{slug}:
+    get:
+      security: []
+      summary: Redirect to the stored destination
+      parameters:
+        - $ref: "#/components/parameters/Slug"
+      responses:
+        "301": { description: Permanent redirect }
+        "302": { description: Temporary redirect }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  parameters:
+    Slug:
+      name: slug
+      in: path
+      required: true
+      schema: { type: string, minLength: 3, maxLength: 64, pattern: "^[A-Za-z0-9_-]+$" }
+  schemas:
+    Health:
+      type: object
+      required: [ok, version, requestId]
+      properties:
+        ok: { type: boolean, const: true }
+        version: { type: string }
+        requestId: { type: string }
+    ShortenRequest:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri, maxLength: 2048 }
+        customSlug: { type: string, minLength: 3, maxLength: 64, pattern: "^[A-Za-z0-9_-]+$" }
+        overwrite: { type: boolean, default: false }
+        ttl: { type: integer, minimum: 1, maximum: 31536000 }
+        expiresAt: { type: string, format: date-time }
+        redirectType: { type: string, enum: ["301", "302"] }
+        fallbackUrl: { type: string, format: uri }
+        private: { type: boolean, default: false }
+        privateTokenRequired: { type: boolean, default: false }
+    UpdateLinkRequest:
+      type: object
+      minProperties: 1
+      properties:
+        url: { type: string, format: uri, maxLength: 2048 }
+        overwrite: { type: boolean, default: false }
+        ttl: { type: integer, minimum: 1, maximum: 31536000 }
+        expiresAt: { type: string, format: date-time }
+        redirectType: { type: string, enum: ["301", "302"] }
+        fallbackUrl: { type: string, format: uri }
+        private: { type: boolean }
+        privateTokenRequired: { type: boolean }
+        disabled: { type: boolean }
+    Link:
+      type: object
+      required: [slug, url, requestId]
+      properties:
+        slug: { type: string }
+        url: { type: string, format: uri }
+        shortUrl: { type: string, format: uri }
+        created: { type: boolean }
+        alreadyExisted: { type: boolean }
+        disabled: { type: boolean }
+        private: { type: boolean }
+        requestId: { type: string }
+    Error:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+        details: { type: object, additionalProperties: true }
+  responses:
+    BadRequest: { description: Invalid request, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Unauthorized: { description: Invalid or missing key, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Forbidden: { description: Operation is not allowed, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    NotFound: { description: Link not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Conflict: { description: Slug conflict, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    RateLimited: { description: Rate limit exceeded, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }

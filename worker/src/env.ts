@@ -1,37 +1,27 @@
 export type TrustMode = "personal" | "readonly" | "readonly-create";
-
-export interface ApiKeyConfig {
-  id: string;
-  role: "admin" | "writer" | "reader";
-  secret?: string;
-  secret_hash?: string;
-}
-
-function resolveApiRole(raw: unknown): ApiKeyConfig["role"] {
-  return raw === "admin" ? "admin" : raw === "reader" ? "reader" : "writer";
-}
+type ConfigScalar = string | number | boolean;
 
 export interface WorkerEnv {
   LINKS: KVNamespace;
-  API_KEY: string;
+  RATE_LIMITER?: RateLimit;
+  API_KEY?: string;
   BASE_URL: string;
-  RATE_LIMIT_WINDOW_SEC?: string;
-  RATE_LIMIT_MAX?: string;
+  RATE_LIMIT_WINDOW_SEC?: ConfigScalar;
+  RATE_LIMIT_MAX?: ConfigScalar;
   ALLOWED_ORIGINS?: string;
-  ALLOW_NO_ORIGIN?: string;
-  STRIP_TRAILING_SLASH?: string;
-  MAX_URL_LENGTH?: string;
-  DEFAULT_TTL_SECONDS?: string;
+  ALLOW_NO_ORIGIN?: ConfigScalar;
+  STRIP_TRAILING_SLASH?: ConfigScalar;
+  MAX_URL_LENGTH?: ConfigScalar;
+  DEFAULT_TTL_SECONDS?: ConfigScalar;
   TRUST_MODE?: string;
   ALLOW_URL_DOMAINS?: string;
   DENY_URL_DOMAINS?: string;
   URL_PRECHECK_URL?: string;
-  URL_PRECHECK_TIMEOUT_MS?: string;
-  URL_PRECHECK_FAIL_OPEN?: string;
+  URL_PRECHECK_TIMEOUT_MS?: ConfigScalar;
+  URL_PRECHECK_FAIL_OPEN?: ConfigScalar;
   DEFAULT_REDIRECT_TYPE?: string;
-  STATS_RETENTION_DAYS?: string;
+  STATS_RETENTION_DAYS?: ConfigScalar;
   API_KEYS_JSON?: string;
-  LINKS_INDEX_D1_URL?: string;
 }
 
 export interface ResolvedConfig {
@@ -50,7 +40,6 @@ export interface ResolvedConfig {
   urlPrecheckFailOpen: boolean;
   defaultRedirectType: "302" | "301";
   statsRetentionDays: number;
-  apiKeys: ApiKeyConfig[];
 }
 
 function normalizeDomainList(raw: string): string[] {
@@ -66,12 +55,17 @@ function parseTrustMode(raw: string | undefined): TrustMode {
   return "personal";
 }
 
-function parsePositiveInt(raw: string | undefined, fallback: number, min = 1): number {
+function parsePositiveInt(raw: ConfigScalar | undefined, fallback: number, min = 1): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < min) {
     return fallback;
   }
   return Math.floor(parsed);
+}
+
+function isTrue(raw: ConfigScalar | undefined, fallback = false): boolean {
+  if (raw === undefined || raw === "") return fallback;
+  return raw === true || raw === 1 || raw === "1" || raw === "true";
 }
 
 export function getConfig(env: WorkerEnv): ResolvedConfig {
@@ -93,32 +87,12 @@ export function getConfig(env: WorkerEnv): ResolvedConfig {
     defaultRedirectType = "301";
   }
 
-  let apiKeys: ApiKeyConfig[] = [];
-  try {
-    if (env.API_KEYS_JSON) {
-      const parsed = JSON.parse(env.API_KEYS_JSON);
-      if (Array.isArray(parsed)) {
-        apiKeys = parsed
-          .filter((item) => item && typeof item.id === "string" && typeof item.role === "string")
-          .map((item) => ({
-            id: String(item.id),
-            role: resolveApiRole(item.role),
-            secret: typeof item.secret === "string" ? item.secret : undefined,
-            secret_hash: typeof item.secret_hash === "string" ? item.secret_hash : undefined,
-          }))
-          .filter((key) => key.id);
-      }
-    }
-  } catch {
-    apiKeys = [];
-  }
-
   return {
     rateLimitWindowSec,
     rateLimitMax,
     allowedOrigins,
-    allowNoOrigin: env.ALLOW_NO_ORIGIN === "1" || env.ALLOW_NO_ORIGIN === "true",
-    stripTrailingSlash: env.STRIP_TRAILING_SLASH !== "false",
+    allowNoOrigin: isTrue(env.ALLOW_NO_ORIGIN, true),
+    stripTrailingSlash: isTrue(env.STRIP_TRAILING_SLASH, true),
     maxUrlLength: parsePositiveInt(env.MAX_URL_LENGTH, 2048, 1),
     defaultTtlSeconds: Number.isFinite(Number(env.DEFAULT_TTL_SECONDS)) && Number(env.DEFAULT_TTL_SECONDS) >= 0 ? Number(env.DEFAULT_TTL_SECONDS) : 0,
     trustMode: parseTrustMode(env.TRUST_MODE),
@@ -126,9 +100,8 @@ export function getConfig(env: WorkerEnv): ResolvedConfig {
     denyUrlDomains,
     urlPrecheckUrl: env.URL_PRECHECK_URL,
     urlPrecheckTimeoutMs,
-    urlPrecheckFailOpen: env.URL_PRECHECK_FAIL_OPEN === "1" || env.URL_PRECHECK_FAIL_OPEN === "true",
+    urlPrecheckFailOpen: isTrue(env.URL_PRECHECK_FAIL_OPEN),
     defaultRedirectType,
     statsRetentionDays,
-    apiKeys,
   };
 }

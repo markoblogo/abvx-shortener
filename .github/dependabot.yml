@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /worker
+    schedule:
+      interval: weekly
+    groups:
+      cloudflare-tooling:
+        patterns:
+          - "@cloudflare/*"
+          - wrangler
+          - vitest
+      lint-and-format:
+        patterns:
+          - eslint
+          - "@typescript-eslint/*"
+          - prettier
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

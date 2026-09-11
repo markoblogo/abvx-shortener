@@ -10,3 +10,7 @@ extension/.DS_Store
 
 # Secrets
 .env
+worker/.dev.vars
+
+# Generated Cloudflare bindings
+worker/worker-configuration.d.ts

@@ -1,6 +1,7 @@
 name = "abvx-shortener"
 main = "src/index.ts"
-compatibility_date = "2026-01-27"
+compatibility_date = "2026-09-11"
+compatibility_flags = ["nodejs_compat"]
 
 # Add your account_id if you want (optional; wrangler can infer after login)
 # account_id = "..."
@@ -18,7 +19,7 @@ RATE_LIMIT_WINDOW_SEC = 60
 RATE_LIMIT_MAX = 30
 
 # V0.3 security and governance controls.
-ALLOW_NO_ORIGIN = "false"
+ALLOW_NO_ORIGIN = "true"
 ALLOWED_ORIGINS = ""
 STRIP_TRAILING_SLASH = "true"
 MAX_URL_LENGTH = 2048
@@ -31,5 +32,15 @@ URL_PRECHECK_TIMEOUT_MS = 1500
 URL_PRECHECK_FAIL_OPEN = false
 DEFAULT_REDIRECT_TYPE = "302"
 STATS_RETENTION_DAYS = 30
-API_KEYS_JSON = ""
-LINKS_INDEX_D1_URL = ""
+
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "31001"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+[observability]
+enabled = true
+head_sampling_rate = 1

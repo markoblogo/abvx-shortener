@@ -4,6 +4,7 @@ const LAST_SHORT_KEY = "abvx_shortener_last_short";
 const DEFAULT_STATE = {
   apiBaseUrl: "https://go.abvx.xyz",
   apiKey: "",
+  apiKeyId: "",
   customSlug: "",
   overwrite: false,
   ttl: "",
@@ -27,7 +28,9 @@ function setLastShort(url) {
 }
 
 function ensureBaseUrl(value) {
-  return String(value || DEFAULT_STATE.apiBaseUrl).replace(/\/$/, "");
+  const parsed = new URL(String(value || DEFAULT_STATE.apiBaseUrl).replace(/\/$/, ""));
+  if (parsed.protocol !== "https:") throw new Error("Shortener endpoint must be https://");
+  return parsed.origin + parsed.pathname.replace(/\/$/, "");
 }
 
 async function buildPayload(url, state) {
@@ -55,6 +58,7 @@ async function callShorten(targetUrl) {
     headers: {
       "content-type": "application/json",
       "X-API-Key": state.apiKey,
+      ...(state.apiKeyId ? { "X-API-Key-Id": state.apiKeyId } : {}),
     },
     body: JSON.stringify(payload),
   });
