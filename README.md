@@ -48,7 +48,7 @@ curl --fail https://go.example.com/health
 Expected shape:
 
 ```json
-{"ok":true,"version":"0.3.1","requestId":"…"}
+{"ok":true,"version":"0.4.0","requestId":"…"}
 ```
 
 ## Create a link
@@ -92,7 +92,7 @@ When using `API_KEYS_JSON`, also set `ABVX_API_KEY_ID` or pass `--api-key-id`.
 
 ### Chrome extension
 
-1. Download `abvx-shortener-extension-v0.3.1.zip` from the release and unpack it.
+1. Download `abvx-shortener-extension-v0.4.0.zip` from the release and unpack it.
 2. Open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**.
 3. Choose the unpacked `extension` directory and enter your endpoint and API key.
 
@@ -100,7 +100,7 @@ The extension requests permanent host access only for `go.abvx.xyz`. A custom en
 
 ## Security model
 
-- API operations require `API_KEY` or a role-based entry in `API_KEYS_JSON`.
+- API operations require `API_KEY`, the dedicated Git Tweet writer key, or a role-based entry in `API_KEYS_JSON`.
 - Browser requests are same-origin by default; additional origins must appear in `ALLOWED_ORIGINS`.
 - Non-browser clients are enabled by default with `ALLOW_NO_ORIGIN=true`.
 - Target and fallback URLs accept only public HTTP(S) destinations.

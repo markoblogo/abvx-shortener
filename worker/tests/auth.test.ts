@@ -12,6 +12,20 @@ function envWithKeys(apiKeysJson: string): WorkerEnv {
 }
 
 describe("API key hashing", () => {
+  it("accepts the dedicated Git Tweet writer without replacing the personal key", async () => {
+    const env: WorkerEnv = {
+      LINKS: {} as KVNamespace,
+      API_KEY: "personal-admin",
+      GIT_TWEET_API_KEY: "release-writer",
+      BASE_URL: "https://go.example.com",
+    };
+    const request = new Request("https://go.example.com/api/shorten", {
+      headers: { "X-API-Key": "release-writer", "X-API-Key-Id": "git-tweet" },
+    });
+
+    await expect(authenticateRequest(request, env)).resolves.toMatchObject({ id: "git-tweet", role: "writer" });
+  });
+
   it("accepts a SHA-256 key hash", async () => {
     const digest = await sha256Hex("correct-horse-battery-staple");
     const env = envWithKeys(

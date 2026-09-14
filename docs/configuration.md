@@ -40,6 +40,18 @@ Replace the repository's KV namespace ID with one from your Cloudflare account. 
 npx wrangler secret put API_KEY
 ```
 
+### Dedicated Git Tweet writer
+
+`GIT_TWEET_API_KEY` adds one isolated writer identity without replacing the
+existing personal key or `API_KEYS_JSON` collection:
+
+```bash
+npx wrangler secret put GIT_TWEET_API_KEY
+```
+
+Git Tweet sends this value as `X-API-Key` together with
+`X-API-Key-Id: git-tweet`. The key can create and manage only its own links.
+
 ### Role-based keys
 
 `API_KEYS_JSON` replaces the personal key path when present. Store it as a secret:

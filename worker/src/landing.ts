@@ -94,7 +94,7 @@ export const LANDING_HTML = `<!doctype html>
         <article class="feature"><strong>Controllable</strong><p>List, update, disable and export links through authenticated management endpoints.</p></article>
         <article class="feature"><strong>Portable</strong><p>One Worker, one KV namespace and documented migration tools. Your domain remains the durable interface.</p></article>
       </section>
-      <footer><span>ABVX Shortener v0.3.1</span><span>Cloudflare Workers + KV · MIT</span></footer>
+      <footer><span>ABVX Shortener v0.4.0</span><span>Cloudflare Workers + KV · MIT</span></footer>
     </div>
     <script>
       (() => {

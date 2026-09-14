@@ -11,7 +11,7 @@ Recommended boundary:
 3. It publishes the returned `shortUrl` to X or Bluesky.
 4. A shortener failure leaves the canonical URL intact; it must not block the post.
 
-Use a separate key ID such as `git-tweet` and restrict `ALLOW_URL_DOMAINS` when the deployment serves only known publishing domains. Keep the API secret in Git Tweet's server environment; never expose it to client-side code.
+Store a dedicated `GIT_TWEET_API_KEY` Worker secret and configure the same value as `SHORTENER_API_KEY` in Git Tweet. Set `SHORTENER_API_KEY_ID=git-tweet`; Git Tweet sends both `X-API-Key` and `X-API-Key-Id`. This preserves the existing personal Shortener key and gives release automation writer-only authority. Keep the API secret in server environments only.
 
 ## Other automation
 
