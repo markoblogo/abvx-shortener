@@ -95,6 +95,14 @@ export async function authenticateRequest(request: Request, env: WorkerEnv): Pro
     return null;
   }
 
+  if (
+    env.GIT_TWEET_API_KEY &&
+    request.headers.get("X-API-Key-Id") === "git-tweet" &&
+    safeEquals(key, env.GIT_TWEET_API_KEY)
+  ) {
+    return { id: "git-tweet", role: "writer", requestApiKey: key };
+  }
+
   const rawKeyConfig = env.API_KEYS_JSON?.trim();
   if (rawKeyConfig) {
     const configuredKeys = parseApiKeys(rawKeyConfig);

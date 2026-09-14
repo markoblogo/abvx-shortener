@@ -6,7 +6,7 @@ Use this checklist for v0.3.0 and later releases. A passing local build does not
 
 - [ ] Version matches in `worker/package.json`, `worker/package-lock.json`, and `extension/manifest.json`.
 - [ ] `CHANGELOG.md` describes user-visible and security changes.
-- [ ] Cloudflare secrets contain `API_KEY` or a valid `API_KEYS_JSON`; role-based hashes use `sha256:<hex>`.
+- [ ] Cloudflare secrets contain `API_KEY` or a valid `API_KEYS_JSON`; optional Git Tweet automation uses an isolated `GIT_TWEET_API_KEY`; role-based hashes use `sha256:<hex>`.
 - [ ] `BASE_URL`, `ALLOWED_ORIGINS`, trust policy, redirect type, and KV/rate-limit bindings match production.
 - [ ] Export existing KV data before a migration or other bulk write.
 

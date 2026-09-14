@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ABVX Shortener",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Shorten the current tab URL using your own ABVX-compatible endpoint and copy it.",
   "action": {
     "default_title": "Shorten & Copy",

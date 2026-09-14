@@ -5,6 +5,7 @@ export interface WorkerEnv {
   LINKS: KVNamespace;
   RATE_LIMITER?: RateLimit;
   API_KEY?: string;
+  GIT_TWEET_API_KEY?: string;
   BASE_URL: string;
   RATE_LIMIT_WINDOW_SEC?: ConfigScalar;
   RATE_LIMIT_MAX?: ConfigScalar;

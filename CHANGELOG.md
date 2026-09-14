@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.0 — 2026-09-14
+
+- Added an isolated `GIT_TWEET_API_KEY` writer identity without rotating the personal Shortener key.
+- Documented the production Git Tweet header and environment contract.
+- Kept canonical release URLs as the fallback when shortening is unavailable.
+
 ## v0.3.1 — 2026-09-11
 
 - Fixed `abvx-shorten --help` to exit successfully.
