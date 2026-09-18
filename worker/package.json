@@ -20,7 +20,7 @@
     "format": "prettier -w ."
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.1.7",
+    "@cloudflare/vitest-plugin": "^1.1.9",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.4",
     "@typescript-eslint/eslint-plugin": "^8.70.0",
