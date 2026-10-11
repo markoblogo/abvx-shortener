@@ -329,8 +329,8 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
         return jsonError("forbidden", "Writers can only reuse or overwrite links they created", requestId, 403);
       }
       if (existing.url === normalizedUrl && existing.disabled !== true) {
-    const expired = expiredReuseResponse(existing, requestId);
-    if (expired) return expired;
+        const expired = expiredReuseResponse(existing, requestId);
+        if (expired) return expired;
         return toManagedResponse(env.BASE_URL, requestedSlug, requestId, existing, false, cfg);
       }
       if (!parsed.data.overwrite && !parsed.data.force) {
