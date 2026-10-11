@@ -158,13 +158,23 @@ function prefersCode410(request: Request): boolean {
   return (request.headers.get("prefer") || "").toLowerCase().includes("code=410");
 }
 
+function assertExternalDestination(destination: string, env: WorkerEnv, request: Request): void {
+  if ([new URL(env.BASE_URL).origin, new URL(request.url).origin].includes(new URL(destination).origin)) {
+    throw new Error("Self redirects are not allowed");
+  }
+}
+
+function expiredReuseResponse(link: LinkRecord, requestId: string): Response | null {
+  return link.expiresAt && link.expiresAt <= Date.now()
+    ? jsonError("conflict", `Link expired; renew it with PUT /api/link/${link.slug} and ttl or expiresAt`, requestId, 409)
+    : null;
+}
+
 function safeRedirect(destination: string, status: number, env: WorkerEnv, requestId: string, request: Request): Response {
   try {
     // Validate legacy/stored data too, without changing its path, query or fragment.
     canonicalizeUrl(destination, env, { stripTrailingSlash: false });
-    if ([new URL(env.BASE_URL).origin, new URL(request.url).origin].includes(new URL(destination).origin)) {
-      throw new Error("Self redirects are not allowed");
-    }
+    assertExternalDestination(destination, env, request);
     return new Response(null, { status, headers: { location: destination, "cache-control": "no-store" } });
   } catch {
     return jsonError("bad_request", "Stored redirect destination is unsafe", requestId, 400);
@@ -291,6 +301,8 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
           },
         })
       : undefined;
+    assertExternalDestination(normalizedUrl, env, request);
+    if (normalizedFallbackUrl) assertExternalDestination(normalizedFallbackUrl, env, request);
   } catch (err) {
     await incrementMetric(env, "api_rejected");
     return jsonError("bad_request", mapError(err), requestId, 400);
@@ -317,6 +329,8 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
         return jsonError("forbidden", "Writers can only reuse or overwrite links they created", requestId, 403);
       }
       if (existing.url === normalizedUrl && existing.disabled !== true) {
+    const expired = expiredReuseResponse(existing, requestId);
+    if (expired) return expired;
         return toManagedResponse(env.BASE_URL, requestedSlug, requestId, existing, false, cfg);
       }
       if (!parsed.data.overwrite && !parsed.data.force) {
@@ -401,12 +415,16 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
   }
 
   if (existing.url === normalizedUrl && existing.disabled !== true) {
+    const expired = expiredReuseResponse(existing, requestId);
+    if (expired) return expired;
     return toManagedResponse(env.BASE_URL, preferred, requestId, existing, false, cfg);
   }
 
   const fallbackExisting = await getLink(env.LINKS, fallback, true, true);
   if (fallbackExisting) {
     if (fallbackExisting.url === normalizedUrl && fallbackExisting.disabled !== true) {
+      const expired = expiredReuseResponse(fallbackExisting, requestId);
+      if (expired) return expired;
       return toManagedResponse(env.BASE_URL, fallback, requestId, fallbackExisting, false, cfg);
     }
     await incrementMetric(env, "api_conflict");
@@ -502,6 +520,8 @@ async function handleUpdateLink(slug: string, env: WorkerEnv, requestId: string,
       : parsed.data.fallbackUrl === ""
         ? undefined
         : existing.fallbackUrl;
+    if (parsed.data.url) assertExternalDestination(nextUrl, env, request);
+    if (parsed.data.fallbackUrl && nextFallbackUrl) assertExternalDestination(nextFallbackUrl, env, request);
   } catch (error) {
     return jsonError("bad_request", mapError(error), requestId, 400);
   }

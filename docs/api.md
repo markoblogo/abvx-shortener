@@ -55,3 +55,7 @@ Stats requests are limited to 90 aligned buckets. The response preserves histori
 ```
 
 Common status codes: `400`, `401`, `403`, `404`, `405`, `409`, `429`, and `500`.
+
+Targets and supplied fallback URLs must have an origin different from BASE_URL and the request origin; create/update reject same-origin destinations with 400 before saving. Stored destinations remain checked on redirect.
+
+Shortening an existing matching expired link returns 409 with the renewal endpoint, rather than reporting successful reuse. Renew explicitly with `PUT /api/link/:slug` and `ttl` or `expiresAt` (owner/admin authorization applies). This preserves the slug, ownership, privacy and history; redirect reads never renew or delete records.
