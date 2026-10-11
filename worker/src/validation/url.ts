@@ -17,9 +17,9 @@ interface PrecheckPayload {
 
 function isLocalOrPrivateHost(host: string): boolean {
   if (!host) return true;
-  const lowered = host.toLowerCase();
+  const lowered = host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
 
-  if (lowered === "localhost" || lowered.endsWith(".localhost") || lowered === "::1" || lowered === "0.0.0.0") {
+  if (lowered === "localhost" || lowered.endsWith(".localhost") || lowered === "::1" || lowered === "::" || lowered === "0.0.0.0") {
     return true;
   }
 
@@ -31,7 +31,7 @@ function isLocalOrPrivateHost(host: string): boolean {
     return true;
   }
 
-  if (lowered.startsWith("fc") || lowered.startsWith("fd") || lowered.startsWith("fe80")) {
+  if (lowered.includes(":") && (/^f[cd]/.test(lowered) || /^fe[89ab]/.test(lowered) || lowered.startsWith("::ffff:"))) {
     return true;
   }
 

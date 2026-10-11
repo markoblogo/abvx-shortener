@@ -6,8 +6,9 @@ Non-secret values live in `worker/wrangler.toml`. Secrets must be created with `
 
 | Binding | Required | Purpose |
 |---|---:|---|
-| `LINKS` | yes | Link records, audit events and approximate counters |
+| `LINKS` | yes | Link records, audit events and read-only legacy counters |
 | `RATE_LIMITER` | production | Native per-key link-creation limiter |
+| `ANALYTICS` | optional | Analytics Engine metrics; provision only after approval |
 
 Replace the repository's KV namespace ID with one from your Cloudflare account. Choose a positive, account-unique `namespace_id` for the rate limiter.
 
@@ -28,7 +29,7 @@ Replace the repository's KV namespace ID with one from your Cloudflare account. 
 | `URL_PRECHECK_TIMEOUT_MS` | `1500` | Precheck timeout |
 | `URL_PRECHECK_FAIL_OPEN` | `false` | Continue when the precheck service fails |
 | `DEFAULT_REDIRECT_TYPE` | `302` | Default `301` or `302` response |
-| `STATS_RETENTION_DAYS` | `30` | Approximate KV counter and audit-event retention |
+| `STATS_RETENTION_DAYS` | `30` | Management audit-event retention (legacy counters keep their existing TTL) |
 
 `RATE_LIMIT_WINDOW_SEC` and `RATE_LIMIT_MAX` configure the local KV fallback. Production limits come from the `RATE_LIMITER` binding.
 

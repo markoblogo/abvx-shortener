@@ -3,6 +3,7 @@ type ConfigScalar = string | number | boolean;
 
 export interface WorkerEnv {
   LINKS: KVNamespace;
+  ANALYTICS?: { writeDataPoint: (_point: { indexes: string[]; blobs: string[]; doubles: number[] }) => void };
   RATE_LIMITER?: RateLimit;
   API_KEY?: string;
   GIT_TWEET_API_KEY?: string;

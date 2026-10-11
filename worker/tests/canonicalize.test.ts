@@ -28,3 +28,12 @@ describe("canonicalizeUrl", () => {
     expect(() => canonicalizeUrl("https://user:pass@example.com", env, { maxLength: 2048 })).toThrowError();
   });
 });
+
+describe("public host boundaries", () => {
+  it.each(["[::]", "[::1]", "[fc00::1]", "[fd00::1]", "[fe80::1]", "[febf::1]", "[::ffff:127.0.0.1]", "localhost."])("rejects %s", host => {
+    expect(() => canonicalizeUrl(`http://${host}/`, env)).toThrow();
+  });
+  it.each(["fda.gov", "fc.example.com", "[2606:4700:4700::1111]"])("accepts public host %s", host => {
+    expect(() => canonicalizeUrl(`https://${host}/`, env)).not.toThrow();
+  });
+});
