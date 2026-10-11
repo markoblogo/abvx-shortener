@@ -164,10 +164,10 @@ function assertExternalDestination(destination: string, env: WorkerEnv, request:
   }
 }
 
-function expiredReuseResponse(link: LinkRecord, requestId: string): Response | null {
-  return link.expiresAt && link.expiresAt <= Date.now()
-    ? jsonError("conflict", `Link expired; renew it with PUT /api/link/${link.slug} and ttl or expiresAt`, requestId, 409)
-    : null;
+async function expiredReuseResponse(link: LinkRecord, requestId: string, env: WorkerEnv): Promise<Response | null> {
+  if (!link.expiresAt || link.expiresAt > Date.now()) return null;
+  await incrementMetric(env, "api_conflict");
+  return jsonError("conflict", `Link expired; renew it with PUT /api/link/${link.slug} and ttl or expiresAt`, requestId, 409);
 }
 
 function safeRedirect(destination: string, status: number, env: WorkerEnv, requestId: string, request: Request): Response {
@@ -329,7 +329,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
         return jsonError("forbidden", "Writers can only reuse or overwrite links they created", requestId, 403);
       }
       if (existing.url === normalizedUrl && existing.disabled !== true) {
-        const expired = expiredReuseResponse(existing, requestId);
+        const expired = await expiredReuseResponse(existing, requestId, env);
         if (expired) return expired;
         return toManagedResponse(env.BASE_URL, requestedSlug, requestId, existing, false, cfg);
       }
@@ -415,7 +415,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
   }
 
   if (existing.url === normalizedUrl && existing.disabled !== true) {
-    const expired = expiredReuseResponse(existing, requestId);
+    const expired = await expiredReuseResponse(existing, requestId, env);
     if (expired) return expired;
     return toManagedResponse(env.BASE_URL, preferred, requestId, existing, false, cfg);
   }
@@ -423,7 +423,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
   const fallbackExisting = await getLink(env.LINKS, fallback, true, true);
   if (fallbackExisting) {
     if (fallbackExisting.url === normalizedUrl && fallbackExisting.disabled !== true) {
-      const expired = expiredReuseResponse(fallbackExisting, requestId);
+      const expired = await expiredReuseResponse(fallbackExisting, requestId, env);
       if (expired) return expired;
       return toManagedResponse(env.BASE_URL, fallback, requestId, fallbackExisting, false, cfg);
     }
@@ -520,8 +520,13 @@ async function handleUpdateLink(slug: string, env: WorkerEnv, requestId: string,
       : parsed.data.fallbackUrl === ""
         ? undefined
         : existing.fallbackUrl;
-    if (parsed.data.url) assertExternalDestination(nextUrl, env, request);
-    if (parsed.data.fallbackUrl && nextFallbackUrl) assertExternalDestination(nextFallbackUrl, env, request);
+    // Validate inherited destinations too, preserving their original path/fragment.
+    canonicalizeUrl(nextUrl, env, { stripTrailingSlash: false });
+    assertExternalDestination(nextUrl, env, request);
+    if (nextFallbackUrl) {
+      canonicalizeUrl(nextFallbackUrl, env, { stripTrailingSlash: false });
+      assertExternalDestination(nextFallbackUrl, env, request);
+    }
   } catch (error) {
     return jsonError("bad_request", mapError(error), requestId, 400);
   }

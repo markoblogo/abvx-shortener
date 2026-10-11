@@ -59,3 +59,5 @@ Common status codes: `400`, `401`, `403`, `404`, `405`, `409`, `429`, and `500`.
 Targets and supplied fallback URLs must have an origin different from BASE_URL and the request origin; create/update reject same-origin destinations with 400 before saving. Stored destinations remain checked on redirect.
 
 Shortening an existing matching expired link returns 409 with the renewal endpoint, rather than reporting successful reuse. Renew explicitly with `PUT /api/link/:slug` and `ttl` or `expiresAt` (owner/admin authorization applies). This preserves the slug, ownership, privacy and history; redirect reads never renew or delete records.
+
+Metadata-only updates and TTL renewal also validate inherited target/fallback destinations against the current URL policy. Replace an unsafe target with an external URL using `overwrite`, or clear an unsafe fallback with `fallbackUrl: ""`, in the same request. Expired-reuse 409 responses emit one `api_conflict` event to logs/optional Analytics Engine, without KV telemetry writes.

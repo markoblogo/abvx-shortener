@@ -6,14 +6,15 @@ import { sha256Base32 } from "../src/slug/generator";
 function fixture() {
   const records = new Map<string, string>();
   const put = vi.fn(async (key: string, value: string) => { records.set(key, value); });
-  const env = { BASE_URL: "https://go.example.com", API_KEY: "secret", ALLOW_NO_ORIGIN: "true",
+  const point = vi.fn();
+  const env = { ANALYTICS: { writeDataPoint: point }, BASE_URL: "https://go.example.com", API_KEY: "secret", ALLOW_NO_ORIGIN: "true",
     RATE_LIMITER: { limit: async () => ({ success: true }) },
     LINKS: { get: async (key: string) => records.get(key) ?? null, put },
   } as unknown as WorkerEnv;
   const call = (path: string, body: unknown, method = "POST") => worker.fetch(new Request(`https://alias.example.com${path}`, {
     method, headers: { "Content-Type": "application/json", "X-API-Key": "secret" }, body: JSON.stringify(body),
   }), env);
-  return { records, put, env, call };
+  return { records, put, point, env, call };
 }
 
 describe("management matches redirect policy", () => {
@@ -29,6 +30,26 @@ describe("management matches redirect policy", () => {
     expect(f.put).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { url: "https://go.example.com/old" },
+    { url: "https://alias.example.com/old" },
+    { fallbackUrl: "https://go.example.com/old" },
+    { fallbackUrl: "https://alias.example.com/old" },
+    { url: "http://127.0.0.1/" },
+    { fallbackUrl: "javascript:alert(1)" },
+  ])("rejects unsafe inherited destinations on metadata updates: %j", async unsafe => {
+    const f = fixture();
+    const stored = JSON.stringify({ slug: "demo", url: "https://example.com/", expiresAt: 1, createdAt: 1, updatedAt: 1, ...unsafe });
+    f.records.set("demo", stored);
+    for (const body of [{ ttl: 3600 }, { expiresAt: new Date(Date.now() + 3600000).toISOString() }, { private: true }]) {
+      expect((await f.call("/api/link/demo", body, "PUT")).status).toBe(400);
+    }
+    expect(f.put).not.toHaveBeenCalled();
+    expect(f.records.get("demo")).toBe(stored);
+    const repair = { url: "https://example.com/repaired#fragment", fallbackUrl: "", overwrite: true, ttl: 3600 };
+    expect((await f.call("/api/link/demo", repair, "PUT")).status).toBe(200);
+  });
+
   it.each(["custom", "deterministic", "collision"])("requires explicit renewal of expired %s links", async mode => {
     const f = fixture();
     const url = "https://example.com/";
@@ -41,6 +62,8 @@ describe("management matches redirect policy", () => {
     expect(response.status).toBe(409);
     expect(await response.text()).toContain(`PUT /api/link/${slug}`);
     expect(f.put).not.toHaveBeenCalled();
+    expect(f.point).toHaveBeenCalledTimes(1);
+    expect(f.point).toHaveBeenCalledWith({ indexes: ["api_conflict"], blobs: ["api_conflict", ""], doubles: [1] });
     expect(JSON.parse(f.records.get(slug)!)).toEqual(record);
     expect((await f.call(`/api/link/${slug}`, { ttl: 3600 }, "PUT")).status).toBe(200);
     expect(JSON.parse(f.records.get(slug)!)).toMatchObject({ private: true, createdAt: 1, accessCount: 7 });
