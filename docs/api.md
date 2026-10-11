@@ -41,7 +41,7 @@ GET /api/stats?window=minute|hour|day
 GET /api/events?cursor=...&type=create|update|delete|soft-delete|restore
 ```
 
-Stats requests are limited to 500 buckets. Counters are approximate and intended for operational diagnosis.
+Stats requests are limited to 90 aligned buckets. The response preserves historical `totals`/`buckets`, but adds `source: "legacy-kv"`, `collection: "stopped"`, `complete: false`, `currentTotals: null` and `analyticsBackend: "workers-logs" | "analytics-engine"`. Legacy KV counters are incomplete and no longer updated. Use Workers Logs or Analytics Engine for current events. Redirect responses use `Cache-Control: no-store`; stored targets/fallbacks are validated on every redirect. Private access is checked before expired/disabled fallbacks.
 
 ## Errors
 

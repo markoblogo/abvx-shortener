@@ -1,6 +1,6 @@
 import { LANDING_HTML } from "./landing";
 import { getConfig, WorkerEnv, type ResolvedConfig } from "./env";
-import { canonicalizeUrlWithPrecheck } from "./validation/url";
+import { canonicalizeUrl, canonicalizeUrlWithPrecheck } from "./validation/url";
 import { json, jsonError, requestIdFromReq } from "./http/response";
 import { authenticateRequest, hasPermission, isAllowedRequestOrigin } from "./auth/index";
 import { rateLimitOk } from "./rateLimit/index";
@@ -43,6 +43,7 @@ function html(body: string, init: ResponseInit = {}) {
 
 function finalizeResponse(response: Response, request: Request, env: WorkerEnv): Response {
   const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
   headers.set("x-content-type-options", "nosniff");
   headers.set("referrer-policy", "no-referrer");
   headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
@@ -95,16 +96,6 @@ function getExpiresAt(ttl?: number, expiresAt?: string): number | undefined {
     return Number.isNaN(ts) ? undefined : ts;
   }
   return undefined;
-}
-
-function shouldIncrementAfterRead(record: LinkRecord): LinkRecord {
-  return {
-    ...record,
-    accessCount: (record.accessCount || 0) + 1,
-    lastAccessAt: Date.now(),
-    updatedAt: record.updatedAt,
-    schemaVersion: record.schemaVersion || 1,
-  };
 }
 
 function getActorId(request: Request, env: WorkerEnv, actor: Awaited<ReturnType<typeof authenticateRequest>>): string {
@@ -167,9 +158,22 @@ function prefersCode410(request: Request): boolean {
   return (request.headers.get("prefer") || "").toLowerCase().includes("code=410");
 }
 
-function fallbackResponse(status: number, request: Request, requestId: string, reason: string, fallbackUrl?: string) {
+function safeRedirect(destination: string, status: number, env: WorkerEnv, requestId: string, request: Request): Response {
+  try {
+    // Validate legacy/stored data too, without changing its path, query or fragment.
+    canonicalizeUrl(destination, env, { stripTrailingSlash: false });
+    if ([new URL(env.BASE_URL).origin, new URL(request.url).origin].includes(new URL(destination).origin)) {
+      throw new Error("Self redirects are not allowed");
+    }
+    return new Response(null, { status, headers: { location: destination, "cache-control": "no-store" } });
+  } catch {
+    return jsonError("bad_request", "Stored redirect destination is unsafe", requestId, 400);
+  }
+}
+
+function fallbackResponse(status: number, request: Request, requestId: string, reason: string, env: WorkerEnv, fallbackUrl?: string) {
   if (fallbackUrl) {
-    return Response.redirect(fallbackUrl, 302);
+    return safeRedirect(fallbackUrl, 302, env, requestId, request);
   }
 
   if (shouldReturnJson(request)) {
@@ -239,7 +243,7 @@ async function ensureRateLimitAllowed(
   const cfg = getConfig(env);
   const allowed = await rateLimitOk(env, request, cfg.rateLimitWindowSec, cfg.rateLimitMax);
   if (!allowed) {
-    await incrementMetric(env.LINKS, "rate_limited", "minute");
+    await incrementMetric(env, "rate_limited");
     return jsonError("rate_limited", "Rate limit exceeded", requestId, 429);
   }
 
@@ -288,7 +292,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
         })
       : undefined;
   } catch (err) {
-    await incrementMetric(env.LINKS, "api_conflict", "minute");
+    await incrementMetric(env, "api_rejected");
     return jsonError("bad_request", mapError(err), requestId, 400);
   }
 
@@ -299,11 +303,11 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
 
   if (requestedSlug) {
     if (RESERVED_SLUGS.has(requestedSlug.toLowerCase())) {
-      await incrementMetric(env.LINKS, "api_conflict", "minute");
+      await incrementMetric(env, "api_rejected");
       return jsonError("bad_request", "Reserved slug", requestId, 400);
     }
     if (!validateSlug(requestedSlug)) {
-      await incrementMetric(env.LINKS, "api_conflict", "minute");
+      await incrementMetric(env, "api_rejected");
       return jsonError("bad_request", "Invalid custom slug", requestId, 400);
     }
 
@@ -316,7 +320,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
         return toManagedResponse(env.BASE_URL, requestedSlug, requestId, existing, false, cfg);
       }
       if (!parsed.data.overwrite && !parsed.data.force) {
-        await incrementMetric(env.LINKS, "api_conflict", "minute");
+        await incrementMetric(env, "api_conflict");
         return jsonError("conflict", "Slug already exists", requestId, 409);
       }
       const before = existing;
@@ -343,7 +347,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
         source: "api",
         requestId,
       }, cfg.statsRetentionDays);
-      await incrementMetric(env.LINKS, "updated", "minute");
+      await incrementMetric(env, "updated");
       return toManagedResponse(env.BASE_URL, requestedSlug, requestId, next, false, cfg);
     }
 
@@ -365,7 +369,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
 
     await saveLink(env.LINKS, next);
     await emitAudit(env.LINKS, { type: "create", slug: requestedSlug, actor: actorId, before: null, after: next, source: "api", requestId }, cfg.statsRetentionDays);
-    await incrementMetric(env.LINKS, "created", "minute");
+    await incrementMetric(env, "created");
     return toManagedResponse(env.BASE_URL, requestedSlug, requestId, next, true, cfg);
   }
 
@@ -392,7 +396,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
     };
     await saveLink(env.LINKS, next);
     await emitAudit(env.LINKS, { type: "create", slug: preferred, actor: actorId, before: null, after: next, source: "api", requestId }, cfg.statsRetentionDays);
-    await incrementMetric(env.LINKS, "created", "minute");
+    await incrementMetric(env, "created");
     return toManagedResponse(env.BASE_URL, preferred, requestId, next, true, cfg);
   }
 
@@ -405,7 +409,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
     if (fallbackExisting.url === normalizedUrl && fallbackExisting.disabled !== true) {
       return toManagedResponse(env.BASE_URL, fallback, requestId, fallbackExisting, false, cfg);
     }
-    await incrementMetric(env.LINKS, "api_conflict", "minute");
+    await incrementMetric(env, "api_conflict");
     return jsonError("conflict", "Slug collision", requestId, 409);
   }
 
@@ -426,7 +430,7 @@ async function handleShorten(request: Request, env: WorkerEnv, requestId: string
   };
   await saveLink(env.LINKS, next);
   await emitAudit(env.LINKS, { type: "create", slug: fallback, actor: actorId, before: null, after: next, source: "api", requestId }, cfg.statsRetentionDays);
-  await incrementMetric(env.LINKS, "created", "minute");
+  await incrementMetric(env, "created");
 
   return toManagedResponse(env.BASE_URL, fallback, requestId, next, true, cfg);
 }
@@ -441,7 +445,7 @@ async function handleGetLink(slug: string, env: WorkerEnv, requestId: string, re
 
   const link = await getLink(env.LINKS, slug, true, true);
   if (!link) {
-    await incrementMetric(env.LINKS, "redirect_miss", "minute");
+    await incrementMetric(env, "link_lookup_miss");
     return jsonError("not_found", "Link not found", requestId, 404);
   }
 
@@ -503,7 +507,7 @@ async function handleUpdateLink(slug: string, env: WorkerEnv, requestId: string,
   }
 
   if (parsed.data.url && existing.url !== nextUrl && !parsed.data.overwrite && !parsed.data.force) {
-    await incrementMetric(env.LINKS, "api_conflict", "minute");
+    await incrementMetric(env, "api_conflict");
     return jsonError("conflict", "Need overwrite/force to change url", requestId, 409);
   }
 
@@ -545,7 +549,7 @@ async function handleUpdateLink(slug: string, env: WorkerEnv, requestId: string,
     },
     cfg.statsRetentionDays,
   );
-  await incrementMetric(env.LINKS, "updated", "minute");
+  await incrementMetric(env, "updated");
 
   return json({
     ...toLinkMeta(next),
@@ -588,7 +592,7 @@ async function handleDeleteLink(slug: string, env: WorkerEnv, requestId: string,
       },
       cfg.statsRetentionDays,
     );
-    await incrementMetric(env.LINKS, "deleted", "minute");
+    await incrementMetric(env, "deleted");
     return json({ slug, deleted: true, hard, requestId });
   }
 
@@ -606,7 +610,7 @@ async function handleDeleteLink(slug: string, env: WorkerEnv, requestId: string,
     },
     cfg.statsRetentionDays,
   );
-  await incrementMetric(env.LINKS, "updated", "minute");
+  await incrementMetric(env, "updated");
 
   return json({ slug, disabled: true, requestId });
 }
@@ -722,7 +726,7 @@ async function handleBulkLinks(request: Request, env: WorkerEnv, requestId: stri
         },
         cfg.statsRetentionDays,
       );
-      await incrementMetric(env.LINKS, "updated", "minute");
+      await incrementMetric(env, "updated");
     }
 
     if (parsed.data.action === "restore") {
@@ -740,7 +744,7 @@ async function handleBulkLinks(request: Request, env: WorkerEnv, requestId: stri
         },
         cfg.statsRetentionDays,
       );
-      await incrementMetric(env.LINKS, "updated", "minute");
+      await incrementMetric(env, "updated");
     }
 
     if (parsed.data.action === "delete") {
@@ -758,7 +762,7 @@ async function handleBulkLinks(request: Request, env: WorkerEnv, requestId: stri
         },
         cfg.statsRetentionDays,
       );
-      await incrementMetric(env.LINKS, "deleted", "minute");
+      await incrementMetric(env, "deleted");
     }
 
     updated.push({ slug, status: parsed.data.dryRun ? "dry_run_ok" : "ok" });
@@ -913,14 +917,19 @@ async function handleStats(request: Request, env: WorkerEnv, requestId: string):
   const until = parsed.data.until ?? now;
 
   const bucketSize = parsed.data.window === "minute" ? 60_000 : parsed.data.window === "hour" ? 3_600_000 : 86_400_000;
-  const bucketCount = Math.floor((until - since) / bucketSize) + 1;
-  if (until < since || bucketCount > 500) {
-    return jsonError("bad_request", "Stats range must contain between 1 and 500 buckets", requestId, 400);
+  const bucketCount = Math.floor(until / bucketSize) - Math.floor(since / bucketSize) + 1;
+  if (until < since || bucketCount > 90) {
+    return jsonError("bad_request", "Stats range must contain between 1 and 90 buckets", requestId, 400);
   }
 
   const stats = await getStats(env.LINKS, parsed.data.window, since, until);
 
   return json({
+    source: "legacy-kv",
+    collection: "stopped",
+    complete: false,
+    currentTotals: null,
+    analyticsBackend: env.ANALYTICS ? "analytics-engine" : "workers-logs",
     window: parsed.data.window,
     generatedAt: new Date(now).toISOString(),
     totals: stats.totals,
@@ -934,49 +943,42 @@ async function handleRedirect(
   request: Request,
   env: WorkerEnv,
   requestId: string,
-  ctx?: ExecutionContext,
+  _ctx?: ExecutionContext,
 ): Promise<Response> {
   const cfg = getConfig(env);
-  if (!slug || slug === "api" || slug === "health") {
+  if (!validateSlug(slug)) {
     return jsonError("not_found", "Not found", requestId, 404);
   }
 
-  const link = await getLink(env.LINKS, slug, false, true);
+  const link = await getLink(env.LINKS, slug, true, true);
   if (!link) {
-    await incrementMetric(env.LINKS, "redirect_miss", "minute");
-    return fallbackResponse(404, request, requestId, "Not found", undefined);
-  }
-
-  if (link.expiresAt && link.expiresAt <= Date.now()) {
-    await incrementMetric(env.LINKS, "expired_hit", "minute");
-    await env.LINKS.delete(slug);
-    return fallbackResponse(prefersCode410(request) ? 410 : 404, request, requestId, "Link expired", link.fallbackUrl);
-  }
-
-  if (link.disabled) {
-    await incrementMetric(env.LINKS, "disabled_hit", "minute");
-    return fallbackResponse(prefersCode410(request) ? 410 : 404, request, requestId, "Link disabled", link.fallbackUrl);
+    await incrementMetric(env, "redirect_miss");
+    return fallbackResponse(404, request, requestId, "Not found", env);
   }
 
   const actor = await authenticateRequest(request, env);
   if (!isPrivateAllowed(actor, link)) {
-    await incrementMetric(env.LINKS, "private_denied", "minute");
+    await incrementMetric(env, "private_denied");
     return jsonError("unauthorized", "Private link requires an authorized token", requestId, actor ? 403 : 401);
   }
 
-  const touched = shouldIncrementAfterRead(link);
-  const postResponse = Promise.all([
-    incrementMetric(env.LINKS, "redirect_hit", "minute"),
-    saveLink(env.LINKS, touched),
-  ]).then(() => undefined);
-  if (ctx) {
-    ctx.waitUntil(postResponse);
-  } else {
-    await postResponse;
+  if (link.expiresAt && link.expiresAt <= Date.now()) {
+    await incrementMetric(env, "expired_hit");
+    return fallbackResponse(prefersCode410(request) ? 410 : 404, request, requestId, "Link expired", env, link.fallbackUrl);
   }
 
-  const redirectType = link.redirectType || cfg.defaultRedirectType;
-  return Response.redirect(link.url, Number(redirectType));
+  if (link.disabled) {
+    await incrementMetric(env, "disabled_hit");
+    return fallbackResponse(prefersCode410(request) ? 410 : 404, request, requestId, "Link disabled", env, link.fallbackUrl);
+  }
+
+  const response = safeRedirect(link.url, Number(link.redirectType || cfg.defaultRedirectType), env, requestId, request);
+  if (response.status === 301 || response.status === 302) {
+    if (request.method === "GET") {
+      await incrementMetric(env, "redirect_hit", slug);
+    }
+  }
+  return response;
 }
 
 export default {
@@ -991,9 +993,9 @@ export default {
       if (request.method === "OPTIONS" && normalizedPath.startsWith("/api/")) {
         const cfg = getConfig(env);
         if (!isAllowedRequestOrigin(request, cfg.allowedOrigins, cfg.allowNoOrigin)) {
-          return finish(jsonError("forbidden", "Origin is not allowed", requestId, 403));
+          return await finish(jsonError("forbidden", "Origin is not allowed", requestId, 403));
         }
-        return finish(
+        return await finish(
           new Response(null, {
             status: 204,
             headers: {
@@ -1006,66 +1008,67 @@ export default {
       }
 
       if (normalizedPath === "/" && (request.method === "GET" || request.method === "HEAD")) {
-        return finish(html(LANDING_HTML, { status: 200 }));
+        return await finish(html(LANDING_HTML, { status: 200 }));
       }
 
       if (normalizedPath === "/health") {
-        return finish(json({ ok: true, version: "0.4.0", requestId }));
+        return await finish(json({ ok: true, version: "0.4.0", requestId }));
       }
 
       if (normalizedPath === "/api/shorten") {
         if (request.method !== "POST") {
-          return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
+          return await finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
         }
-        return finish(handleShorten(request, env, requestId));
+        return await finish(handleShorten(request, env, requestId));
       }
 
       if (normalizedPath === "/api/links") {
-        if (request.method === "GET") return finish(handleListLinks(request, env, requestId));
-        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
+        if (request.method === "GET") return await finish(handleListLinks(request, env, requestId));
+        return await finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath === "/api/links/bulk") {
-        if (request.method === "POST") return finish(handleBulkLinks(request, env, requestId));
-        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
+        if (request.method === "POST") return await finish(handleBulkLinks(request, env, requestId));
+        return await finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath === "/api/links/export") {
-        if (request.method === "GET") return finish(handleExportLinks(request, env, requestId));
-        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
+        if (request.method === "GET") return await finish(handleExportLinks(request, env, requestId));
+        return await finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath === "/api/stats") {
-        if (request.method === "GET") return finish(handleStats(request, env, requestId));
-        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
+        if (request.method === "GET") return await finish(handleStats(request, env, requestId));
+        return await finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath === "/api/events") {
-        if (request.method === "GET") return finish(handleEvents(request, env, requestId));
-        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
+        if (request.method === "GET") return await finish(handleEvents(request, env, requestId));
+        return await finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (normalizedPath.startsWith("/api/link/")) {
         const slug = extractSlug(normalizedPath.slice("/api/link/".length));
         if (!slug) {
-          return finish(jsonError("bad_request", "Slug is required", requestId, 400));
+          return await finish(jsonError("bad_request", "Slug is required", requestId, 400));
         }
 
-        if (request.method === "GET") return finish(handleGetLink(slug, env, requestId, request));
-        if (request.method === "PUT") return finish(handleUpdateLink(slug, env, requestId, request));
-        if (request.method === "DELETE") return finish(handleDeleteLink(slug, env, requestId, request));
+        if (request.method === "GET") return await finish(handleGetLink(slug, env, requestId, request));
+        if (request.method === "PUT") return await finish(handleUpdateLink(slug, env, requestId, request));
+        if (request.method === "DELETE") return await finish(handleDeleteLink(slug, env, requestId, request));
 
-        return finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
+        return await finish(jsonError("method_not_allowed", "Method not allowed", requestId, 405));
       }
 
       if (request.method === "GET" || request.method === "HEAD") {
         const slug = extractSlug(normalizedPath);
-        return finish(handleRedirect(slug, request, env, requestId, ctx));
+        return await finish(handleRedirect(slug, request, env, requestId, ctx));
       }
 
-      return finish(new Response("Not found", { status: 404 }));
+      return await finish(new Response("Not found", { status: 404 }));
     } catch (error) {
-      return finish(jsonError("internal_error", mapError(error), requestId, 500));
+      console.error(JSON.stringify({ event: "request_error", requestId, error: mapError(error) }));
+      return await finish(jsonError("internal_error", "Internal server error", requestId, 500));
     }
   },
 };

@@ -128,13 +128,13 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/stats:
     get:
-      summary: Read approximate operational counters
+      summary: Read incomplete historical KV counters (collection stopped)
       parameters:
         - { name: window, in: query, schema: { type: string, enum: [minute, hour, day], default: minute } }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { name: until, in: query, schema: { type: string, format: date-time } }
       responses:
-        "200": { description: Counter buckets }
+        "200": { description: "Historical buckets only; complete=false, collection=stopped, currentTotals=null. Maximum 90 aligned buckets." }
         "400": { $ref: "#/components/responses/BadRequest" }
   /api/events:
     get:

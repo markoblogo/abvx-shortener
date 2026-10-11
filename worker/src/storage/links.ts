@@ -159,7 +159,6 @@ export async function getLink(namespace: KVNamespace, slug: string, includeDisab
   }
 
   if (!includeExpired && normalized.expiresAt && normalized.expiresAt <= Date.now()) {
-    await namespace.delete(slug);
     return null;
   }
 
@@ -184,19 +183,6 @@ export async function putExpiredOrDisabled(namespace: KVNamespace, slug: string,
 
 export async function hardDeleteLink(namespace: KVNamespace, slug: string): Promise<void> {
   await namespace.delete(slug);
-}
-
-export async function touchLink(namespace: KVNamespace, record: LinkRecord): Promise<void> {
-  const now = Date.now();
-  await namespace.put(
-    record.slug,
-    JSON.stringify({
-      ...record,
-      updatedAt: now,
-      lastAccessAt: now,
-      accessCount: (record.accessCount || 0) + 1,
-    }),
-  );
 }
 
 export async function listLinkKeys(namespace: KVNamespace, cursor: string = "", limit: number = 100): Promise<{ keys: string[]; cursor: string; done: boolean }> {

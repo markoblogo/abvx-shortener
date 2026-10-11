@@ -1,3 +1,5 @@
+import type { WorkerEnv } from "../env";
+
 export const METRIC_KEYS = [
   "redirect_hit",
   "redirect_miss",
@@ -12,6 +14,7 @@ export const METRIC_KEYS = [
 ] as const;
 
 export type MetricKey = (typeof METRIC_KEYS)[number];
+type EventMetric = MetricKey | "api_rejected" | "link_lookup_miss";
 
 export type StatsWindow = "minute" | "hour" | "day";
 
@@ -33,13 +36,19 @@ function bucketEnds(window: StatsWindow, startTs: number): number {
   return startTs + WINDOW_SIZE_SEC[window] * 1000 - 1;
 }
 
-export async function incrementMetric(namespace: KVNamespace, metric: MetricKey, window: StatsWindow = "minute", retentionDays = 30): Promise<void> {
-  const now = Date.now();
-  const bucket = bucketStartTs(now, window);
-  const key = metricKey(metric, window, bucket);
-  const ttl = Math.max(1, retentionDays) * 24 * 60 * 60;
-  const current = Number(await namespace.get(key)) || 0;
-  await namespace.put(key, String(current + 1), { expirationTtl: ttl });
+// Metrics never mutate LINKS. KV read-modify-write counters lose concurrent events.
+export async function incrementMetric(env: WorkerEnv, metric: EventMetric, slug = ""): Promise<void> {
+  console.log(JSON.stringify({ event: "metric", metric, ts: Date.now() }));
+  try {
+    env.ANALYTICS?.writeDataPoint({
+      indexes: [metric],
+      blobs: [metric, slug],
+      doubles: [1],
+    });
+  } catch {
+    // Telemetry failures must not turn a successful mutation/redirect into an error.
+    console.error(JSON.stringify({ event: "analytics_error", metric }));
+  }
 }
 
 export async function getMetricWindowCount(namespace: KVNamespace, metric: MetricKey, window: StatsWindow, bucketStart: number): Promise<number> {

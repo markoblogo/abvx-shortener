@@ -19,20 +19,20 @@ flowchart LR
 - `worker/src/index.ts` owns routing and HTTP behavior.
 - `worker/src/auth/` authenticates keys, roles and browser origins.
 - `worker/src/validation/` canonicalizes and validates target URLs.
-- `worker/src/storage/` owns link records, audit events and approximate counters.
+- `worker/src/storage/` owns link records, audit events and telemetry.
 - `extension/` and `bin/` are untrusted API clients; they never receive KV access.
 
 ## Storage model
 
 Normal KV keys are slugs. System data uses reserved prefixes:
 
-- `stats:` for operational counters;
+- `stats:` for legacy counters (read-only, no new samples);
 - `evt:` for expiring audit events;
 - `rl:` for the local fallback limiter used when the native binding is absent.
 
-Redirect lookups use KV's globally distributed read path. Link creation and management are authenticated. Redirect-hit bookkeeping runs through `ctx.waitUntil()` so it does not delay the response.
+Redirect lookups are read-only, including expired and disabled links. No redirect writes to KV or schedules background bookkeeping. Link creation and management remain authenticated and write link records plus management audit events.
 
-KV counters are intentionally approximate because read-modify-write operations are not atomic. They support personal operational visibility, not billing or compliance accounting. A future high-volume deployment should move event analytics to Analytics Engine or an indexed store.
+Metrics emit structured Workers Logs and, if provisioned separately, an optional `ANALYTICS` binding. Successful GET redirects emit one `redirect_hit`; HEAD probes do not count as clicks. Events count requests, including bots, rather than unique people. Telemetry failures cannot fail a redirect. Legacy `accessCount` and `lastAccessAt` fields are preserved but no longer updated. `/api/stats` exposes only explicitly incomplete legacy KV counters; use Logs or Analytics Engine for new events.
 
 ## Security invariants
 

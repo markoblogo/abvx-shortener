@@ -24,11 +24,11 @@ Role-based clients must also set `ABVX_API_KEY_ID`.
 ## Monitoring
 
 - Cloudflare Workers Logs are enabled in `wrangler.toml`.
-- `/api/stats` reports approximate first-party KV counters.
+- `/api/stats` reports historical KV counters with `source=legacy-kv`, `collection=stopped`, `complete=false` and `currentTotals=null`; it is not live analytics.
 - `/api/events` exposes expiring management events.
 - HTTP responses carry a `requestId`; correlate it with `cf-ray` where available.
 
-KV counters are not atomic. Do not use them for billing or security quotas. The native `RATE_LIMITER` binding protects creation requests independently.
+New metrics never use KV counters. Logs can be sampled or expire; do not equate log counts with exact human traffic. The native `RATE_LIMITER` binding protects creation requests independently.
 
 ## Backup and restore
 
@@ -58,3 +58,30 @@ Use Cloudflare's deployment rollback for Worker code. Do not roll back a KV migr
 | `429 Rate limit exceeded` | Native binding limit and key identity |
 | Redirect returns `404` | Link expiry, disabled state, slug spelling, and KV namespace binding |
 | Local and production differ | Confirm both use the expected config and KV namespace |
+
+## Passive operation and analytics
+
+The Worker has no cron or scheduled handler. Leave the manual production workflow manual. Requests still use CPU/KV reads; being idle cannot stop unsolicited Internet traffic. Management writes and their audit events remain intentional. The local KV rate-limiter fallback is not a production quota mechanism; keep the native `RATE_LIMITER` binding.
+
+For current metrics, filter Workers Logs on `event=metric` and group by `metric`. Destination URLs, credentials and private slugs are not included in metric logs. Runtime failures emit `request_error` with a request ID; clients receive a generic 500 response.
+
+Optionally, after explicit production approval, add an Analytics Engine dataset binding (no binding is provisioned by this PR):
+
+```toml
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "abvx_shortener_metrics"
+```
+
+`blob1` is the metric, `blob2` is the slug for successful authorized GET redirects (empty otherwise), and `double1` is 1. Treat dataset access as sensitive because private slugs may be recorded. Query through the authenticated SQL API; do not add API tokens to public config:
+
+```sql
+SELECT blob1 AS metric, SUM(_sample_interval * double1) AS requests
+FROM abvx_shortener_metrics
+WHERE timestamp >= NOW() - INTERVAL '1' DAY
+GROUP BY blob1
+```
+
+This weighting accounts for Analytics Engine sampling; counts remain estimates when sampled. HEAD is excluded from `redirect_hit`; expired/disabled fallback responses retain their own outcome metrics. The API does not query Analytics Engine, and missing current counts remain `null`. Historical KV stats are bounded to 90 aligned buckets (at most 900 counter reads, below the invocation budget).
+
+Before approved rollout, record the current Worker version, export LINKS securely, compare allowed destinations with the new stored-URL validation, and verify the clients that consume `/api/stats`. Deploy only after approval. Code rollback is sufficient: no data migration or deletion is performed. Old code restores the problematic KV telemetry, so prefer a forward fix if possible.

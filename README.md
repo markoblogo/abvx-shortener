@@ -14,7 +14,7 @@ ABVX Shortener gives individuals and small teams a compact link service without 
 
 - deterministic slugs: the same normalized URL returns the same short link;
 - custom aliases, expiration, fallback destinations and `301`/`302` redirects;
-- authenticated link management, export, audit events and first-party counters;
+- authenticated link management, export, audit events and first-party event metrics;
 - a browser interface, command-line client and Chrome Manifest V3 extension;
 - no third-party analytics, advertising scripts or external UI dependencies.
 
@@ -131,7 +131,7 @@ Malformed key configuration fails closed. See [Security Policy](SECURITY.md) and
 | Bulk and export | `POST /api/links/bulk`, `GET /api/links/export` |
 | Operations | `GET /api/stats`, `GET /api/events` |
 
-Use [docs/api.md](docs/api.md) for examples and [openapi.yaml](openapi.yaml) for tooling. Operational counters are first-party and stored in your KV namespace; they are approximate under concurrent traffic.
+Use [docs/api.md](docs/api.md) for examples and [openapi.yaml](openapi.yaml) for tooling. Current event metrics use Workers Logs and optional Analytics Engine. `/api/stats` returns explicitly incomplete historical KV counters. Redirects never write to KV.
 
 ## Project layout
 
