@@ -20,7 +20,7 @@
     "format": "prettier -w ."
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.1.7",
+    "@cloudflare/vitest-plugin": "^1.4.11",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.4",
     "@typescript-eslint/eslint-plugin": "^8.70.0",
@@ -29,7 +29,7 @@
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0",
-    "wrangler": "^4.131.0",
+    "wrangler": "^4.156.0",
     "zod": "^3.24.1"
   }
 }
